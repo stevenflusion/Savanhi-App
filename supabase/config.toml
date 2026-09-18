@@ -1,5 +1,0 @@
-[functions.validate-coupon]
-verify_jwt = true
-
-[functions.redeem-coupon]
-verify_jwt = true

@@ -1,6 +1,6 @@
-# Backend architecture
+# Backend Architecture
 
-The Clients, Delivery, Tenderos, and Web backends share `@repo/backend-core`. HTTP routers depend on application-facing repository methods; database rows and driver errors never cross the HTTP boundary.
+The Tenderos backend uses `@repo/backend-core`. HTTP routers depend on application-facing repository methods; database rows and driver errors never cross the HTTP boundary.
 
 ## Local PostgreSQL
 
