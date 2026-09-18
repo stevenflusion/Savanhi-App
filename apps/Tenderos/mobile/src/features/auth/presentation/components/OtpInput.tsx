@@ -1,6 +1,7 @@
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import { useEffect, useRef } from "react";
-import { Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { normalizeOtpCode } from "../../application/otp-flow";
 
 type Props = {
   value: string;
@@ -11,67 +12,54 @@ type Props = {
 const CELLS = 6;
 
 export default function OtpInput({ value, onChange, error }: Props) {
-  const refs = useRef<(TextInput | null)[]>(Array(CELLS).fill(null));
+  const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
-    refs.current[0]?.focus();
+    inputRef.current?.focus();
   }, []);
-
-  const handleChangeText = (text: string, index: number) => {
-    if (text.length > 1) {
-      const digits = text.replace(/\D/g, "").slice(0, CELLS);
-      onChange(digits);
-      const nextIndex = Math.min(digits.length, CELLS - 1);
-      refs.current[nextIndex]?.focus();
-      return;
-    }
-
-    const digit = text.replace(/\D/g, "");
-    if (digit) {
-      const newVal = value.slice(0, index) + digit + value.slice(index + 1);
-      onChange(newVal);
-      if (index < CELLS - 1) {
-        refs.current[index + 1]?.focus();
-      }
-    }
-  };
-
-  const handleKeyPress = (key: string, index: number) => {
-    if (key === "Backspace") {
-      if (value[index]) {
-        const newVal = value.slice(0, index) + value.slice(index + 1);
-        onChange(newVal);
-      } else if (index > 0) {
-        const newVal = value.slice(0, index - 1) + value.slice(index);
-        onChange(newVal);
-        refs.current[index - 1]?.focus();
-      }
-    }
-  };
 
   return (
     <View>
-      <View className="flex-row justify-center gap-3">
-        {Array.from({ length: CELLS }, (_, i) => (
-          <TextInput
-            key={i}
-            ref={(r) => {
-              refs.current[i] = r;
-            }}
-            value={value[i] ?? ""}
-            onChangeText={(t) => handleChangeText(t, i)}
-            onKeyPress={({ nativeEvent: { key } }) => handleKeyPress(key, i)}
-            keyboardType="number-pad"
-            maxLength={CELLS}
-            className={`h-16 w-14 text-gray-600 rounded-2xl border text-center text-2xl font-medium ${
-              error ? "border-red-400" : "border-gray-900"
-            }`}
-            textContentType="oneTimeCode"
-          />
-        ))}
-      </View>
+      <Pressable onPress={() => inputRef.current?.focus()}>
+        <View
+          className="flex-row justify-center gap-3"
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+        >
+          {Array.from({ length: CELLS }, (_, i) => (
+            <View
+              key={i}
+              className={`h-16 w-14 items-center justify-center rounded-2xl border ${
+                error ? "border-red-400" : "border-gray-900"
+              }`}
+            >
+              <Text className="text-2xl font-medium text-gray-600">
+                {value[i] ?? ""}
+              </Text>
+            </View>
+          ))}
+        </View>
+        <TextInput
+          ref={inputRef}
+          value={value}
+          onChangeText={(text) => onChange(normalizeOtpCode(text))}
+          keyboardType="number-pad"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          accessibilityLabel="Código de verificación de 6 dígitos"
+          accessibilityHint="Pega o escribe el código recibido por correo"
+          accessibilityValue={{
+            text: `${value.length} de 6 dígitos ingresados`,
+          }}
+          style={[StyleSheet.absoluteFillObject, styles.hiddenInput]}
+        />
+      </Pressable>
       {error ? (
-        <Text className="text-sm pt-4 ml-4 leading-5 text-red-400">
+        <Text
+          accessibilityRole="alert"
+          accessibilityLiveRegion="assertive"
+          className="text-sm pt-4 ml-4 leading-5 text-red-400"
+        >
           <MaterialCommunityIcons
             name="alert-circle-outline"
             size={18}
@@ -83,3 +71,10 @@ export default function OtpInput({ value, onChange, error }: Props) {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  hiddenInput: {
+    color: "transparent",
+    opacity: 0.02,
+  },
+});

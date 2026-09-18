@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import authLogo from "../assets/auth-logo";
+import type { OtpAuthState } from "@repo/api-contracts";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -25,6 +26,7 @@ export default function EnterEmailScreen() {
   const insets = useSafeAreaInsets();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
+  const [otpState, setOtpState] = useState<OtpAuthState | null>(null);
   const [error, setError] = useState("");
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
@@ -71,11 +73,15 @@ export default function EnterEmailScreen() {
   const handleSubmit = async () => {
     if (!valid || loading) return;
     Keyboard.dismiss();
+    setOtpState("sending");
     setLoading(true);
     setError("");
     const result = await requestOTP(email);
-    if (result.success) {
-      router.push(`/auth/enter-otp?email=${encodeURIComponent(email)}`);
+    setOtpState(result.state ?? "provider_error");
+    if (result.success && result.challengeId) {
+      router.push(
+        `/auth/enter-otp?email=${encodeURIComponent(email)}&challengeId=${encodeURIComponent(result.challengeId)}&cooldownSeconds=${result.cooldownSeconds ?? 0}`,
+      );
       setTimeout(() => setLoading(false), 400);
     } else {
       setLoading(false);
@@ -94,7 +100,10 @@ export default function EnterEmailScreen() {
         }}
       >
         <View className="flex-1 px-6" style={{ paddingTop: insets.top + 24 }}>
-          <Pressable onPress={handleBack} className="mb-10 h-10 w-10 justify-center">
+          <Pressable
+            onPress={handleBack}
+            className="mb-10 h-10 w-10 justify-center"
+          >
             <FontAwesome6 name="chevron-left" size={24} color="black" />
           </Pressable>
 
@@ -117,7 +126,13 @@ export default function EnterEmailScreen() {
           />
 
           {error ? (
-            <Text className="text-base pt-4 leading-5 text-red-400">{error}</Text>
+            <Text
+              accessibilityRole="alert"
+              accessibilityLiveRegion="assertive"
+              className="text-base pt-4 leading-5 text-red-400"
+            >
+              {error}
+            </Text>
           ) : (
             <Text className="text-base pt-4 leading-5 text-gray-600">
               Te enviaremos un código para verificar tu email. Es posible que
@@ -130,6 +145,8 @@ export default function EnterEmailScreen() {
           <Pressable
             onPress={handleSubmit}
             disabled={!valid || loading}
+            accessibilityState={{ disabled: !valid || loading, busy: loading }}
+            accessibilityValue={otpState ? { text: otpState } : undefined}
             className={`h-16 items-center justify-center rounded-full ${
               valid ? "bg-black" : "bg-gray-100"
             }`}
@@ -153,7 +170,11 @@ export default function EnterEmailScreen() {
       {loading && (
         <View className="absolute inset-0 z-50">
           <View className="flex-1 items-center justify-center bg-white">
-            <Image source={authLogo} className="h-40 w-40" resizeMode="contain" />
+            <Image
+              source={authLogo}
+              className="h-40 w-40"
+              resizeMode="contain"
+            />
           </View>
         </View>
       )}

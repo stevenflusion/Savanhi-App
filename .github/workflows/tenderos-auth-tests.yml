@@ -1,0 +1,57 @@
+name: Tenderos auth tests
+
+on:
+  pull_request:
+    paths:
+      - "apps/Tenderos/**"
+      - "packages/api-contracts/**"
+      - "packages/backend-core/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".github/workflows/tenderos-auth-tests.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  auth:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: savanhi
+          POSTGRES_USER: savanhi
+          POSTGRES_PASSWORD: savanhi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U savanhi -d savanhi"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://savanhi:savanhi@localhost:5432/savanhi
+      AUTH_JWT_SECRET: test-secret-that-is-long-enough
+      OTP_PROVIDER: development
+      OTP_DEV_CODE: "123456"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @repo/backend-core db:migrate
+      - run: pnpm --filter @repo/backend-core db:seed
+      - run: pnpm test
+      - run: pnpm check-types

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createBackendContext, createEnv } from "../index.js";
 
 function readBootstrapEnv(name: string, fallback: string): string {
@@ -6,7 +7,6 @@ function readBootstrapEnv(name: string, fallback: string): string {
 
 async function main() {
   const email = readBootstrapEnv("DEV_ADMIN_EMAIL", "dev.admin@savanhi.local");
-  const password = readBootstrapEnv("DEV_ADMIN_PASSWORD", "ChangeMe123!");
   const fullName = readBootstrapEnv("DEV_ADMIN_FULL_NAME", "Developer Admin");
 
   const env = createEnv({
@@ -19,15 +19,22 @@ async function main() {
 
   const existing = await context.repositories.users.findByEmail(normalizedEmail);
   if (existing) throw new Error(`An admin profile already exists for ${email}.`);
-  const result = await context.authService.signUpWithPassword({ email, password, fullName, role: "admin" });
-  const profile = result.user;
+  const profile = await context.repositories.users.ensure({
+    id: randomUUID(),
+    email: normalizedEmail,
+    fullName,
+    role: "admin",
+    active: true,
+    emailVerifiedAt: null,
+    registrationStatus: "completed",
+  });
 
   console.log(
     JSON.stringify(
       {
         ok: true,
         user: profile,
-        note: "Use role admin for full backend access. There is no separate developer role in the current authorization model.",
+        note: "Verify this email through OTP before using the admin account.",
       },
       null,
       2

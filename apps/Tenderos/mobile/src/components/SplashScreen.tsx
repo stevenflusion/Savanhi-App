@@ -1,6 +1,8 @@
 import { View, StyleSheet } from "react-native"
 import LottieView from "lottie-react-native"
-import { useCallback, useRef } from "react"
+import { useCallback, useRef, type ComponentType } from "react"
+
+const CompatibleLottieView = LottieView as unknown as ComponentType<any>
 
 type SplashScreenProps = {
   onAnimationFinish: () => void
@@ -24,7 +26,7 @@ function SplashScreen({ onAnimationFinish }: SplashScreenProps) {
   return (
     <View style={styles.container}>
       <View style={styles.lottieWrapper}>
-        <LottieView
+        <CompatibleLottieView
           ref={animationRef}
           source={require("../../assets/lotties/Splash_Screen.json")}
           autoPlay

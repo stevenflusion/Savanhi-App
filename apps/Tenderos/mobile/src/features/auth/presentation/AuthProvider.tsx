@@ -9,6 +9,7 @@ import {
 
 import type {
   AuthOnboardingDraft,
+  AuthOnboardingStep,
   AuthPaymentMethod,
   AuthSessionState,
   StoredAuthSession,
@@ -36,9 +37,16 @@ type AuthProviderProps = {
 
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<StoredAuthSession["user"] | null>(null);
-  const [onboardingDraft, setOnboardingDraft] = useState<AuthOnboardingDraft | null>(null);
-  const [sessionAccessToken, setSessionAccessToken] = useState<string | null>(null);
-  const [sessionRefreshToken, setSessionRefreshToken] = useState<string | null>(null);
+  const [onboardingDraft, setOnboardingDraft] =
+    useState<AuthOnboardingDraft | null>(null);
+  const [onboardingStep, setOnboardingStepState] =
+    useState<AuthOnboardingStep | null>(null);
+  const [sessionAccessToken, setSessionAccessToken] = useState<string | null>(
+    null,
+  );
+  const [sessionRefreshToken, setSessionRefreshToken] = useState<string | null>(
+    null,
+  );
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
   const [isReady, setIsReady] = useState(false);
 
@@ -46,6 +54,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (!stored) {
       setUser(null);
       setOnboardingDraft(null);
+      setOnboardingStepState(null);
       setSessionAccessToken(null);
       setSessionRefreshToken(null);
       setSessionExpiresAt(null);
@@ -54,6 +63,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     setUser(stored.user);
     setOnboardingDraft(stored.onboardingDraft);
+    setOnboardingStepState(stored.onboardingStep);
     setSessionAccessToken(stored.session.accessToken);
     setSessionRefreshToken(stored.session.refreshToken);
     setSessionExpiresAt(stored.session.expiresAt);
@@ -65,6 +75,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return {
       user,
       onboardingDraft,
+      onboardingStep,
       session: {
         accessToken: sessionAccessToken,
         refreshToken: sessionRefreshToken,
@@ -73,49 +84,33 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } satisfies StoredAuthSession;
   };
 
-  const persistCurrentSession = async (nextStored: StoredAuthSession | null) => {
+  const persistCurrentSession = async (
+    nextStored: StoredAuthSession | null,
+  ) => {
     await authUseCases.persistAuthSession(nextStored);
     syncStoredSession(nextStored);
   };
 
   useEffect(() => {
     (async () => {
-      const stored = await authUseCases.initializeAuthSession();
-      syncStoredSession(stored);
-      setIsReady(true);
+      try {
+        const stored = await authUseCases.initializeAuthSession();
+        syncStoredSession(stored);
+      } catch {
+        syncStoredSession(null);
+      } finally {
+        setIsReady(true);
+      }
     })();
   }, []);
-
-  const login = async (email: string, password: string) => {
-    const stored = await authUseCases.loginAuth(email, password);
-    syncStoredSession(stored);
-    return stored !== null;
-  };
-
-  const register = async (name: string, email: string, password: string) => {
-    const stored = await authUseCases.registerAuth(name, email, password);
-    syncStoredSession(stored);
-    return stored !== null;
-  };
 
   const saveProfile = async (data: SaveProfileInput) => {
     const stored = getStoredSession();
     if (!stored) return { success: false, error: "Sesión no encontrada." };
 
-    const nextStored = {
-      ...stored,
-      user: {
-        ...stored.user,
-        fullName: data.name,
-      },
-      onboardingDraft: {
-        ...(stored.onboardingDraft ?? {}),
-        storeName: data.storeName,
-      },
-    } satisfies StoredAuthSession;
-
-    await persistCurrentSession(nextStored);
-    return { success: true };
+    const result = await authUseCases.updateAuthProfile(stored, data);
+    if ("stored" in result) syncStoredSession(result.stored ?? null);
+    return { success: result.success, error: result.error };
   };
 
   const savePhotos = async (uris: string[]) => {
@@ -128,8 +123,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
         ...(stored.onboardingDraft ?? {}),
         photos: uris,
       },
+      onboardingStep: "account-created",
     } satisfies StoredAuthSession;
 
+    await persistCurrentSession(nextStored);
+    return { success: true };
+  };
+
+  const setOnboardingStep = async (step: AuthOnboardingStep) => {
+    const stored = getStoredSession();
+    if (!stored) return { success: false, error: "Sesión no encontrada." };
+    const nextStored = { ...stored, onboardingStep: step };
     await persistCurrentSession(nextStored);
     return { success: true };
   };
@@ -159,12 +163,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return authUseCases.requestAuthOtp(email);
   };
 
-  const verifyOTP = async (email: string, code: string) => {
-    const result = await authUseCases.verifyAuthOtp(email, code);
+  const verifyOTP = async (
+    email: string,
+    challengeId: string,
+    code: string,
+  ) => {
+    const result = await authUseCases.verifyAuthOtp(email, challengeId, code);
     if (result.stored) syncStoredSession(result.stored);
     return {
       success: result.success,
-      isNewUser: result.isNewUser,
+      user: result.stored?.user,
+      state: result.state,
+      retryAfterSeconds: result.retryAfterSeconds,
       error: result.error,
     };
   };
@@ -179,6 +189,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         ...(stored.onboardingDraft ?? {}),
         ...data,
       },
+      onboardingStep: "store-photos",
     } satisfies StoredAuthSession;
 
     await persistCurrentSession(nextStored);
@@ -186,10 +197,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   const completeRegistration = async () => {
-    const result = await authUseCases.completeAuthRegistration(getStoredSession());
+    const result =
+      await authUseCases.completeAuthRegistration(getStoredSession());
 
-    if (result.user) setUser(result.user);
-    if (result.onboardingDraft === null) setOnboardingDraft(null);
+    if ("stored" in result) syncStoredSession(result.stored ?? null);
     return { success: result.success, error: result.error };
   };
 
@@ -198,19 +209,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
       isLoggedIn: user !== null,
       user,
       onboardingDraft,
+      onboardingStep,
       isReady,
-      login,
-      register,
       saveProfile,
       savePhotos,
       savePaymentMethod,
       saveLocation,
+      setOnboardingStep,
       requestOTP,
       verifyOTP,
       completeRegistration,
       logout,
     }),
-    [user, onboardingDraft, isReady],
+    [user, onboardingDraft, onboardingStep, isReady],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -17,8 +17,6 @@ export type BackendEnv = {
   };
   rateLimits: {
     api: number;
-    login: number;
-    register: number;
     otpRequest: number;
     otpVerify: number;
     refresh: number;

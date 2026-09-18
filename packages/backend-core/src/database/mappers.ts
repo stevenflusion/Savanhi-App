@@ -22,6 +22,8 @@ export function mapProfile(row: UserRow): AuthUser {
     fullName: row.fullName,
     role: normalizeRole(row.roleName, "tendero"),
     active: row.active,
+    emailVerifiedAt: row.emailVerifiedAt?.toISOString() ?? null,
+    registrationStatus: row.registrationStatus,
   };
 }
 export function mapAdminUser(row: UserRow): AdminUser {

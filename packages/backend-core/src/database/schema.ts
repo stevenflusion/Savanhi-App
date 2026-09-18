@@ -4,11 +4,25 @@ import {
   index,
   integer,
   numeric,
+  pgEnum,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+
+const REGISTRATION_STATUSES = [
+  "profile_required",
+  "store_required",
+  "completed",
+] as const;
+
+export const registrationStatusEnum = pgEnum(
+  "registration_status",
+  REGISTRATION_STATUSES,
+);
 
 export const roles = pgTable("roles", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -25,9 +39,13 @@ export const users = pgTable("users", {
     .notNull(),
   email: text("email").notNull().unique(),
   emailNormalized: text("email_normalized").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
+  passwordHash: text("password_hash"),
   fullName: text("full_name").notNull(),
   active: boolean("active").default(true).notNull(),
+  emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+  registrationStatus: registrationStatusEnum("registration_status")
+    .default("profile_required")
+    .notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -71,6 +89,7 @@ export const otpChallenges = pgTable(
     attempts: integer("attempts").default(0).notNull(),
     consumedAt: timestamp("consumed_at", { withTimezone: true }),
     lockedAt: timestamp("locked_at", { withTimezone: true }),
+    cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -78,6 +97,49 @@ export const otpChallenges = pgTable(
   (table) => ({
     emailIndex: index("otp_challenges_email_idx").on(table.emailNormalized),
     expiryIndex: index("otp_challenges_expiry_idx").on(table.expiresAt),
+    activeEmailIndex: uniqueIndex("otp_challenges_active_email_uidx")
+      .on(table.emailNormalized)
+      .where(sql`${table.consumedAt} is null and ${table.lockedAt} is null`),
+  }),
+);
+
+export const otpRequestLeases = pgTable(
+  "otp_request_leases",
+  {
+    emailNormalized: text("email_normalized").primaryKey(),
+    leaseToken: uuid("lease_token").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    expiryIndex: index("otp_request_leases_expiry_idx").on(table.expiresAt),
+  }),
+);
+
+export const authRateLimits = pgTable(
+  "auth_rate_limits",
+  {
+    action: text("action").notNull(),
+    scope: text("scope").notNull(),
+    key: text("key").notNull(),
+    count: integer("count").default(0).notNull(),
+    resetAt: timestamp("reset_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    bucketIndex: uniqueIndex("auth_rate_limits_bucket_uidx").on(
+      table.action,
+      table.scope,
+      table.key,
+    ),
+    resetIndex: index("auth_rate_limits_reset_idx").on(table.resetAt),
   }),
 );
 
@@ -204,6 +266,8 @@ export const schema = {
   users,
   authSessions,
   otpChallenges,
+  otpRequestLeases,
+  authRateLimits,
   authEvents,
   register,
   login,

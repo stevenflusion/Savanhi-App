@@ -2,6 +2,7 @@ import Entypo from "@expo/vector-icons/Entypo";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import { useRouter } from "expo-router";
 import * as Location from "expo-location";
+import { useAuth } from "@/src/features/auth";
 import { useEffect, useRef, useState } from "react";
 import {
   Animated,
@@ -16,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import authLogo from "../assets/auth-logo";
 
 export default function LocationPermissionsScreen() {
+  const { setOnboardingStep } = useAuth();
   const router = useRouter();
   const [showDenyModal, setShowDenyModal] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -34,6 +36,11 @@ export default function LocationPermissionsScreen() {
     const { status } = await Location.requestForegroundPermissionsAsync();
 
     if (status === "granted") {
+      const result = await setOnboardingStep("business-location");
+      if (!result.success) {
+        setLoading(false);
+        return;
+      }
       setTimeout(() => {
         router.push("/auth/business-location" as any);
         setTimeout(() => setLoading(false), 400);
@@ -44,9 +51,14 @@ export default function LocationPermissionsScreen() {
     }
   };
 
-  const handleContinueAnyway = () => {
+  const handleContinueAnyway = async () => {
     setLoading(true);
     setShowDenyModal(false);
+    const result = await setOnboardingStep("business-location");
+    if (!result.success) {
+      setLoading(false);
+      return;
+    }
     setTimeout(() => {
       router.push("/auth/business-location" as any);
       setTimeout(() => setLoading(false), 400);
@@ -130,7 +142,11 @@ export default function LocationPermissionsScreen() {
       {loading && (
         <View className="absolute inset-0 z-50">
           <View className="flex-1 items-center justify-center bg-white">
-            <Image source={authLogo} className="h-40 w-40" resizeMode="contain" />
+            <Image
+              source={authLogo}
+              className="h-40 w-40"
+              resizeMode="contain"
+            />
           </View>
         </View>
       )}

@@ -2,11 +2,13 @@
 schema: spec-driven
 
 context: |
-  Monorepo (pnpm + Turborepo) housing Tenderos mobile app.
-  Focus: apps/Tenderos/mobile — Expo SDK 54, React Native 0.81.5, NativeWind v4, TypeScript 5.9.
-  Other apps: Tenderos/web (Next.js 14), Tenderos/docs (Next.js 14), Web/backend (Express.js), Web/web-enterprise (Next.js 14).
-  Shared packages: ui, tailwind-config, typescript-config, eslint-config (ESLint v9).
-  Per-app openspec: web-enterprise initialized 2026-06-29 at apps/Web/web-enterprise/openspec/.
+  pnpm 11 and Turborepo 2 monorepo for the Tenderos product.
+  Tenderos mobile uses Expo 54, React Native 0.81, React 19, NativeWind 4, and TypeScript.
+  Tenderos backend is an Express composition root over shared backend-core and API contracts.
+  backend-core uses Express 5, Drizzle ORM, PostgreSQL, and feature-oriented service/repository modules.
+  Authentication spans mobile presentation/application/infrastructure, API contracts, backend-core, and the Tenderos backend.
+  Tests exist in mobile (Jest/jest-expo) and backend-core (Node test runner through tsx).
+  No root test command covers every workspace project; Strict TDD remains disabled.
 
 rules:
   proposal:
@@ -21,46 +23,142 @@ rules:
     - Group by phase, use hierarchical numbering
     - Keep tasks completable in one session
   apply:
-    - Follow existing code patterns
+    guidelines:
+      - Follow existing code patterns
     tdd: false
     test_command: ""
   verify:
     test_command: ""
-    build_command: "pnpm --filter tenderos-mobile run dev"
+    build_command: "pnpm build"
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas
 
 testing:
   strict_tdd: false
-  reason: "No test runner detected in any workspace. Install a test runner (Vitest recommended) and configure before enabling strict TDD."
-  detected: "2026-06-17"
-  runner:
-    command: ""
-    framework: ""
-  layers:
-    unit:
-      available: false
-      tool: ""
-    integration:
-      available: false
-      tool: ""
-    e2e:
-      available: false
-      tool: ""
-  coverage:
-    available: false
-    command: ""
-  quality:
-    linter:
-      available: true
-      command: "pnpm turbo run lint"
-      tool: "ESLint v9"
-    type_checker:
-      available: true
-      command: "pnpm turbo run check-types"
-      tool: "TypeScript 5.9 (tsc --noEmit)"
-    formatter:
-      available: true
-      command: "pnpm format (prettier --write)"
-      tool: "Prettier v3"
+  reason: "Project-local test commands exist, but no explicit workspace-level test command covers every in-scope project."
+  detected: "2026-09-13"
+  workspace:
+    test_command: ""
+    build_command: "pnpm build"
+    lint_command: "pnpm lint"
+    typecheck_command: "pnpm check-types"
+    format_command: "pnpm format"
+    notes:
+      - "The root package does not define a test script and turbo.json does not define a test task."
+      - "The root lint task is declared, but no current workspace member defines a lint script."
+  projects:
+    - path: "."
+      stack: "pnpm 11, Turborepo 2, TypeScript 5.9"
+      test:
+        command: ""
+        framework: ""
+      layers: { unit: false, integration: false, e2e: false }
+      coverage: { available: false, command: "" }
+      quality:
+        linter:
+          {
+            available: false,
+            command: "pnpm lint",
+            tool: "Turbo task only; no member lint scripts",
+          }
+        type_checker:
+          {
+            available: true,
+            command: "pnpm check-types",
+            tool: "Turbo + TypeScript",
+          }
+        formatter:
+          { available: true, command: "pnpm format", tool: "Prettier 3" }
+    - path: "apps/Tenderos/mobile"
+      stack: "Expo 54, React Native 0.81, React 19, TypeScript 5.9"
+      test:
+        command: "pnpm --filter tenderos-mobile test"
+        framework: "Jest 29 with jest-expo"
+      layers:
+        unit: { available: true, tool: "Jest" }
+        integration: { available: true, tool: "React Native Testing Library" }
+        e2e: { available: false, tool: "" }
+      coverage: { available: false, command: "" }
+      quality:
+        linter: { available: false, command: "", tool: "" }
+        type_checker:
+          {
+            available: true,
+            command: "pnpm --filter tenderos-mobile check-types",
+            tool: "TypeScript",
+          }
+        formatter: { available: false, command: "", tool: "" }
+    - path: "apps/Tenderos/backend"
+      stack: "Node.js, Express 4, TypeScript 6"
+      test:
+        command: ""
+        framework: ""
+      layers: { unit: false, integration: false, e2e: false }
+      coverage: { available: false, command: "" }
+      quality:
+        linter: { available: false, command: "", tool: "" }
+        type_checker:
+          {
+            available: true,
+            command: "pnpm --filter tenderos-backend check-types",
+            tool: "TypeScript",
+          }
+        formatter: { available: false, command: "", tool: "" }
+    - path: "packages/backend-core"
+      stack: "Node.js, Express 5, Drizzle ORM, PostgreSQL, TypeScript 6"
+      test:
+        command: "pnpm --filter @repo/backend-core test"
+        framework: "Node test runner through tsx"
+      layers:
+        unit: { available: true, tool: "node:test" }
+        integration: { available: true, tool: "node:test + PostgreSQL/Drizzle" }
+        e2e: { available: false, tool: "" }
+      coverage: { available: false, command: "" }
+      quality:
+        linter: { available: false, command: "", tool: "" }
+        type_checker:
+          {
+            available: true,
+            command: "pnpm --filter @repo/backend-core check-types",
+            tool: "TypeScript",
+          }
+        formatter: { available: false, command: "", tool: "" }
+    - path: "packages/api-contracts"
+      stack: "TypeScript 6 shared contracts"
+      test:
+        command: ""
+        framework: ""
+      layers: { unit: false, integration: false, e2e: false }
+      coverage: { available: false, command: "" }
+      quality:
+        linter: { available: false, command: "", tool: "" }
+        type_checker:
+          {
+            available: true,
+            command: "pnpm --filter @repo/api-contracts check-types",
+            tool: "TypeScript",
+          }
+        formatter: { available: false, command: "", tool: "" }
+    - path: "packages/tailwind-config"
+      stack: "Shared Tailwind configuration"
+      test:
+        command: ""
+        framework: ""
+      layers: { unit: false, integration: false, e2e: false }
+      coverage: { available: false, command: "" }
+      quality:
+        linter: { available: false, command: "", tool: "" }
+        type_checker: { available: false, command: "", tool: "" }
+        formatter: { available: false, command: "", tool: "" }
+    - path: "packages/typescript-config"
+      stack: "Shared TypeScript configuration"
+      test:
+        command: ""
+        framework: ""
+      layers: { unit: false, integration: false, e2e: false }
+      coverage: { available: false, command: "" }
+      quality:
+        linter: { available: false, command: "", tool: "" }
+        type_checker: { available: false, command: "", tool: "" }
+        formatter: { available: false, command: "", tool: "" }

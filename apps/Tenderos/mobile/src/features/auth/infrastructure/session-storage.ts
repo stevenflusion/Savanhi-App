@@ -6,6 +6,13 @@ import type {
   LegacyStoredAuthSession,
   StoredAuthSession,
 } from "../domain/auth.types";
+import { normalizeOnboardingStep } from "../domain/auth-navigation";
+
+const REGISTRATION_STATUSES = [
+  "profile_required",
+  "store_required",
+  "completed",
+] as const;
 
 export const AUTH_SESSION_STORAGE_KEY = "savanhi-mobile-session";
 
@@ -30,36 +37,57 @@ function extractOnboardingDraft(
     : null;
 }
 
-function normalizeStoredAuthSession(value: unknown): StoredAuthSession | null {
+export function normalizeStoredAuthSession(
+  value: unknown,
+): StoredAuthSession | null {
   if (!isRecord(value) || !isRecord(value.session) || !isRecord(value.user)) {
     return null;
   }
 
-	const legacy = value as LegacyStoredAuthSession;
-	const {
-		storeName: _storeName,
-		address: _address,
-		latitude: _latitude,
-		longitude: _longitude,
-		photos: _photos,
-		paymentMethod: _paymentMethod,
-		...nextUser
-	} = legacy.user;
+  const legacy = value as LegacyStoredAuthSession;
+  const {
+    storeName: _storeName,
+    address: _address,
+    latitude: _latitude,
+    longitude: _longitude,
+    photos: _photos,
+    paymentMethod: _paymentMethod,
+    ...nextUser
+  } = legacy.user;
 
-  const onboardingDraft = "onboardingDraft" in value
-    ? ((value as StoredAuthSession).onboardingDraft ?? null)
-    : extractOnboardingDraft(legacy.user);
+  const onboardingDraft =
+    "onboardingDraft" in value
+      ? ((value as StoredAuthSession).onboardingDraft ?? null)
+      : extractOnboardingDraft(legacy.user);
 
-	return {
-		user: nextUser,
+  const user = {
+    ...nextUser,
+    registrationStatus: REGISTRATION_STATUSES.includes(
+      nextUser.registrationStatus,
+    )
+      ? nextUser.registrationStatus
+      : "profile_required",
+  } as StoredAuthSession["user"];
+  const onboardingStep = normalizeOnboardingStep(
+    user,
+    onboardingDraft,
+    value.onboardingStep,
+  );
+
+  return {
+    user,
     session: legacy.session,
     onboardingDraft,
+    onboardingStep,
   } satisfies StoredAuthSession;
 }
 
 export async function persistAuthSession(value: StoredAuthSession | null) {
   if (value) {
-    await SecureStore.setItemAsync(AUTH_SESSION_STORAGE_KEY, JSON.stringify(value));
+    await SecureStore.setItemAsync(
+      AUTH_SESSION_STORAGE_KEY,
+      JSON.stringify(value),
+    );
     return;
   }
 
@@ -79,8 +107,37 @@ export async function loadAuthSession(): Promise<StoredAuthSession | null> {
 }
 
 export function createSecureStoreAuthSessionRepository(): AuthSessionRepository {
+  let operationQueue: Promise<unknown> = Promise.resolve();
+
+  function enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = operationQueue.then(operation, operation);
+    operationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  function isCurrentGeneration(
+    current: StoredAuthSession | null,
+    expected: StoredAuthSession,
+  ) {
+    return (
+      current?.user.id === expected.user.id &&
+      current.session.accessToken === expected.session.accessToken &&
+      current.session.refreshToken === expected.session.refreshToken
+    );
+  }
+
   return {
-    load: loadAuthSession,
-    save: persistAuthSession,
+    load: () => enqueue(loadAuthSession),
+    save: (value) => enqueue(() => persistAuthSession(value)),
+    saveIfCurrent: (expected, value) =>
+      enqueue(async () => {
+        const current = await loadAuthSession();
+        if (!isCurrentGeneration(current, expected)) return false;
+        await persistAuthSession(value);
+        return true;
+      }),
   };
 }

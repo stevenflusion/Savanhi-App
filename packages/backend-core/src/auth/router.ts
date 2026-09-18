@@ -1,4 +1,4 @@
-import { AUTH_ROLES, type AuthRole } from "@repo/api-contracts/auth";
+import type { AuthRole } from "@repo/api-contracts/auth";
 import {
   Router,
   type NextFunction,
@@ -10,9 +10,8 @@ import {
 import { AppError } from "../errors.js";
 import { validateBody } from "../middleware/validation.js";
 import {
+  completeRegistrationSchema,
   refreshSchema,
-  registerSchema,
-  loginSchema,
   otpRequestSchema,
   otpVerifySchema,
   updateProfileSchema,
@@ -58,10 +57,7 @@ export function createRequireRole(authService: AuthService) {
 export function createAuthRouter(
   authService: AuthService,
   {
-    allowedRegistrationRoles = [...AUTH_ROLES] as AuthRole[],
     limits = {
-      login: 10,
-      register: 5,
       otpRequest: 5,
       otpVerify: 10,
       refresh: 30,
@@ -83,15 +79,12 @@ export function createAuthRouter(
   });
 
   router.post(
-    "/auth/login",
-    rateLimit(limiter, "login", limits.login),
-    validateBody(loginSchema),
+    "/auth/otp/request",
+    validateBody(otpRequestSchema),
     async (req, res, next) => {
       try {
-        const { email, password } = req.body;
-        const result = await authService.signInWithPassword(
-          email,
-          password,
+        const result = await authService.requestOtp(
+          req.body.email,
           requestMeta(req),
         );
         res.status(200).json(result);
@@ -102,55 +95,13 @@ export function createAuthRouter(
   );
 
   router.post(
-    "/auth/register",
-    rateLimit(limiter, "register", limits.register),
-    validateBody(registerSchema),
-    async (req, res, next) => {
-      try {
-        const { email, password, fullName, role } = req.body;
-        if (role && !allowedRegistrationRoles.includes(role)) {
-          throw new AppError(
-            "Registration role is not allowed for this backend.",
-            403,
-          );
-        }
-
-        const result = await authService.signUpWithPassword({
-          email,
-          password,
-          fullName,
-          role,
-        });
-        res.status(201).json(result);
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  router.post(
-    "/auth/otp/request",
-    rateLimit(limiter, "otp-request", limits.otpRequest),
-    validateBody(otpRequestSchema),
-    async (req, res, next) => {
-      try {
-        await authService.requestOtp(req.body.email, requestMeta(req));
-        res.status(200).json({ ok: true });
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  router.post(
     "/auth/otp/verify",
-    rateLimit(limiter, "otp-verify", limits.otpVerify),
     validateBody(otpVerifySchema),
     async (req, res, next) => {
       try {
-        const { email, token } = req.body;
+        const { email, challengeId, token } = req.body;
         const result = await authService.verifyOtp(
-          { email, token },
+          { email, challengeId, token },
           requestMeta(req),
         );
         res.status(200).json(result);
@@ -175,6 +126,23 @@ export function createAuthRouter(
           req.body,
         );
         res.status(200).json({ user });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.post(
+    "/auth/registration/complete",
+    requireAuth(["tendero"]),
+    validateBody(completeRegistrationSchema),
+    async (req, res, next) => {
+      try {
+        const result = await authService.completeRegistration(
+          req.auth?.user.id ?? "",
+          req.body,
+        );
+        res.status(200).json(result);
       } catch (error) {
         next(error);
       }

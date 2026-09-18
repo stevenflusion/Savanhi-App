@@ -11,7 +11,6 @@ export function createApp() {
     defaultRegistrationRole: "tendero",
   });
   const { authRouter, requireRole } = createAuthRouter(context.authService, {
-    allowedRegistrationRoles: ["tendero"],
     limits: context.env.rateLimits,
   });
 

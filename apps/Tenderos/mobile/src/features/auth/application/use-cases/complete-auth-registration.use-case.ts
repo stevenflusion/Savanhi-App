@@ -3,6 +3,7 @@ import type { AuthUser } from "@repo/api-contracts";
 import type { AuthRemoteRepository } from "../ports/auth-remote-repository";
 import type { AuthSessionRepository } from "../ports/auth-session-repository";
 import type { StoredAuthSession } from "../../domain/auth.types";
+import { executeProtectedAuthRequest } from "./execute-protected-auth-request";
 
 type CompleteAuthRegistrationDeps = {
   remoteRepository: AuthRemoteRepository;
@@ -13,34 +14,70 @@ export function createCompleteAuthRegistrationUseCase({
   remoteRepository,
   sessionRepository,
 }: CompleteAuthRegistrationDeps) {
-  return async function completeAuthRegistration(stored: StoredAuthSession | null) {
+  return async function completeAuthRegistration(
+    stored: StoredAuthSession | null,
+  ) {
     if (!stored) {
       return { success: false, error: "Sesión no encontrada." };
     }
 
-    const result = await remoteRepository.completeRegistration({
-      user: stored.user,
-      onboardingDraft: stored.onboardingDraft,
-      accessToken: stored.session.accessToken,
+    const execution = await executeProtectedAuthRequest({
+      stored,
+      remoteRepository,
+      sessionRepository,
+      request: (accessToken) =>
+        remoteRepository.completeRegistration({
+          user: stored.user,
+          onboardingDraft: stored.onboardingDraft,
+          accessToken,
+        }),
     });
+    const result = execution.result;
 
-    if (!result.success || !result.data) {
-      return { success: false, error: result.error };
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        stored: execution.stored,
+      };
     }
 
-    const nextUser = {
-      ...stored.user,
-      fullName: result.data.fullName,
-    } satisfies AuthUser;
+    const baseStored = execution.stored;
+    if (!baseStored) {
+      return {
+        success: false,
+        error: "La sesión cambió. Intenta nuevamente.",
+        stored: null,
+      };
+    }
+
+    const nextUser = result.data.user satisfies AuthUser;
 
     const nextStored = {
-      ...stored,
+      ...baseStored,
       user: nextUser,
       onboardingDraft: null,
+      onboardingStep: null,
     } satisfies StoredAuthSession;
 
-    await sessionRepository.save(nextStored);
+    const persisted = await sessionRepository.saveIfCurrent(
+      baseStored,
+      nextStored,
+    );
+    if (!persisted) {
+      return {
+        success: false,
+        error: "La sesión cambió. Intenta nuevamente.",
+        stored: await sessionRepository.load(),
+      };
+    }
 
-    return { success: true, user: nextUser, data: result.data };
+    return {
+      success: true,
+      user: nextUser,
+      onboardingDraft: null,
+      stored: nextStored,
+      data: result.data,
+    };
   };
 }

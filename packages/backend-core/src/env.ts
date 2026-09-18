@@ -110,8 +110,6 @@ export function createEnv({
         : process.env.OTP_DEV_CODE,
     rateLimits: {
       api: parseLimit(process.env.RATE_LIMIT_API, 120),
-      login: parseLimit(process.env.RATE_LIMIT_LOGIN, 10),
-      register: parseLimit(process.env.RATE_LIMIT_REGISTER, 5),
       otpRequest: parseLimit(process.env.RATE_LIMIT_OTP_REQUEST, 5),
       otpVerify: parseLimit(process.env.RATE_LIMIT_OTP_VERIFY, 10),
       refresh: parseLimit(process.env.RATE_LIMIT_REFRESH, 30),

@@ -4,12 +4,11 @@ import type { AuthSessionRepository } from "../ports/auth-session-repository";
 
 import { createCompleteAuthRegistrationUseCase } from "./complete-auth-registration.use-case";
 import { createInitializeAuthSessionUseCase } from "./initialize-auth-session.use-case";
-import { createLoginAuthUseCase } from "./login-auth.use-case";
 import { createLogoutAuthUseCase } from "./logout-auth.use-case";
 import { createPersistAuthSessionUseCase } from "./persist-auth-session.use-case";
-import { createRegisterAuthUseCase } from "./register-auth.use-case";
 import { createRequestAuthOtpUseCase } from "./request-auth-otp.use-case";
 import { createVerifyAuthOtpUseCase } from "./verify-auth-otp.use-case";
+import { createUpdateAuthProfileUseCase } from "./update-auth-profile.use-case";
 
 type CreateAuthUseCasesDeps = {
   remoteRepository: AuthRemoteRepository;
@@ -26,14 +25,22 @@ export function createAuthUseCases({
       sessionRepository,
     }),
     persistAuthSession: createPersistAuthSessionUseCase(sessionRepository),
-    loginAuth: createLoginAuthUseCase({ remoteRepository, sessionRepository }),
-    registerAuth: createRegisterAuthUseCase({ remoteRepository, sessionRepository }),
     requestAuthOtp: createRequestAuthOtpUseCase(remoteRepository),
-    verifyAuthOtp: createVerifyAuthOtpUseCase({ remoteRepository, sessionRepository }),
+    verifyAuthOtp: createVerifyAuthOtpUseCase({
+      remoteRepository,
+      sessionRepository,
+    }),
+    updateAuthProfile: createUpdateAuthProfileUseCase({
+      remoteRepository,
+      sessionRepository,
+    }),
     completeAuthRegistration: createCompleteAuthRegistrationUseCase({
       remoteRepository,
       sessionRepository,
     }),
-    logoutAuth: createLogoutAuthUseCase({ remoteRepository, sessionRepository }),
+    logoutAuth: createLogoutAuthUseCase({
+      remoteRepository,
+      sessionRepository,
+    }),
   };
 }

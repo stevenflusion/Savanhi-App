@@ -7,3 +7,6 @@ expo-env.d.ts
 
 # Environment variables
 .env
+
+# Android-only native project
+/ios

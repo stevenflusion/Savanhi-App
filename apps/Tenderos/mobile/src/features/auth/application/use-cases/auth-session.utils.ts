@@ -2,6 +2,7 @@ import type { AuthSession, AuthUser } from "@repo/api-contracts";
 
 import type {
   AuthOnboardingDraft,
+  AuthOnboardingStep,
   AuthSessionState,
   StoredAuthSession,
 } from "../../domain/auth.types";
@@ -21,6 +22,12 @@ export function toStoredAuthSession(user: AuthUser, session: AuthSession) {
     user,
     session: toSession(session),
     onboardingDraft: null,
+    onboardingStep:
+      user.registrationStatus === "profile_required"
+        ? "person-name"
+        : user.registrationStatus === "store_required"
+          ? "store-name"
+          : null,
   } satisfies StoredAuthSession;
 }
 
@@ -31,5 +38,15 @@ export function withOnboardingDraft(
   return {
     ...stored,
     onboardingDraft,
+  } satisfies StoredAuthSession;
+}
+
+export function withOnboardingStep(
+  stored: StoredAuthSession,
+  onboardingStep: AuthOnboardingStep | null,
+) {
+  return {
+    ...stored,
+    onboardingStep,
   } satisfies StoredAuthSession;
 }

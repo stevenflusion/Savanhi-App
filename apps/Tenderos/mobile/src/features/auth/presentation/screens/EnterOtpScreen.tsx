@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAuth } from "@/src/features/auth";
 import { useEffect, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
   Animated,
   Image,
   Keyboard,
@@ -17,31 +18,65 @@ import {
 } from "react-native";
 import OtpInput from "../components/OtpInput";
 import authLogo from "../assets/auth-logo";
+import type { OtpAuthState } from "@repo/api-contracts";
+import {
+  createSynchronousLock,
+  getOtpDeadline,
+  getOtpFailureMessage,
+  type OtpFailureState,
+} from "../../application/otp-flow";
 
 export default function EnterOtpScreen() {
-  const { email } = useLocalSearchParams<{ email?: string }>();
+  const {
+    email,
+    challengeId: initialChallengeId,
+    cooldownSeconds,
+  } = useLocalSearchParams<{
+    email?: string;
+    challengeId?: string;
+    cooldownSeconds?: string;
+  }>();
   const { verifyOTP, requestOTP } = useAuth();
   const router = useRouter();
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [otpState, setOtpState] = useState<OtpAuthState>("sent");
   const [resending, setResending] = useState(false);
-  const [countdown, setCountdown] = useState(30);
+  const [challengeId, setChallengeId] = useState(initialChallengeId ?? "");
+  const [resendDeadline, setResendDeadline] = useState(
+    () => Date.now() + Math.max(0, Number(cooldownSeconds) || 0) * 1000,
+  );
+  const resendDeadlineRef = useRef(resendDeadline);
+  const [countdown, setCountdown] = useState(() =>
+    Math.max(0, Math.ceil((resendDeadline - Date.now()) / 1000)),
+  );
   const [showChangeEmailModal, setShowChangeEmailModal] = useState(false);
   const verifyingRef = useRef(false);
+  const resendLock = useRef(createSynchronousLock()).current;
+
+  const updateResendDeadline = (deadline: number) => {
+    resendDeadlineRef.current = deadline;
+    setResendDeadline(deadline);
+  };
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    if (!email || !initialChallengeId) {
+      router.replace("/auth/enter-email");
+    }
+  }, [email, initialChallengeId, router]);
+
+  useEffect(() => {
+    const updateCountdown = () =>
+      setCountdown(
+        Math.max(0, Math.ceil((resendDeadline - Date.now()) / 1000)),
+      );
+    updateCountdown();
+    if (resendDeadline <= Date.now()) return;
+    const timer = setInterval(updateCountdown, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [resendDeadline]);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -67,26 +102,47 @@ export default function EnterOtpScreen() {
     }
   }, [code]);
 
+  useEffect(() => {
+    const announcement = error || feedback;
+    if (announcement) AccessibilityInfo.announceForAccessibility(announcement);
+  }, [error, feedback]);
+
   const handleVerify = async () => {
     if (loading || verifyingRef.current) return;
+    if (!challengeId) {
+      setError("El código ya no está disponible. Solicita uno nuevo.");
+      setCode("");
+      return;
+    }
     Keyboard.dismiss();
     verifyingRef.current = true;
     setLoading(true);
     setError("");
-    const result = await verifyOTP(email ?? "", code);
-    verifyingRef.current = false;
+    setFeedback("");
+    try {
+      const result = await verifyOTP(email ?? "", challengeId, code);
 
-    if (result.success) {
-      if (result.isNewUser) {
-        router.push("/auth/person-name" as any);
-        setTimeout(() => setLoading(false), 400);
+      if (result.success) {
+        if (result.user?.registrationStatus === "completed") {
+          router.replace("/(tabs)");
+        } else if (result.user?.registrationStatus === "store_required") {
+          router.replace("/auth/store-name" as any);
+        } else {
+          router.replace("/auth/person-name" as any);
+        }
       } else {
-        router.replace("/(tabs)");
+        const state = result.state ?? "provider_error";
+        setOtpState(state);
+        setError(getOtpFailureMessage(state as OtpFailureState, result.error));
+        setCode("");
       }
-    } else {
-      setLoading(false);
-      setError(result.error ?? "Código inválido");
+    } catch {
+      setOtpState("provider_error");
+      setError("No pudimos guardar tu sesión. Solicita un código nuevo.");
       setCode("");
+    } finally {
+      verifyingRef.current = false;
+      setLoading(false);
     }
   };
 
@@ -96,10 +152,30 @@ export default function EnterOtpScreen() {
   };
 
   const handleResend = async () => {
-    if (resending) return;
+    if (Date.now() < resendDeadlineRef.current || !resendLock.tryAcquire()) {
+      return;
+    }
     setResending(true);
-    await requestOTP(email ?? "");
-    setResending(false);
+    setOtpState("sending");
+    setError("");
+    setFeedback("");
+    setCode("");
+    try {
+      const result = await requestOTP(email ?? "");
+      setOtpState(result.state ?? "provider_error");
+      const deadline = getOtpDeadline(Date.now(), result);
+      if (deadline > Date.now()) updateResendDeadline(deadline);
+      if (result.success && result.challengeId) {
+        setChallengeId(result.challengeId);
+        setFeedback("Te enviamos un nuevo código.");
+        return;
+      }
+      const state = result.state ?? "provider_error";
+      setError(getOtpFailureMessage(state as OtpFailureState, result.error));
+    } finally {
+      resendLock.release();
+      setResending(false);
+    }
   };
 
   return (
@@ -114,7 +190,12 @@ export default function EnterOtpScreen() {
             }}
           >
             <View className="flex-1 px-6 pt-10">
-              <Pressable onPress={handleBack} className="mb-10 h-10 w-10 justify-center">
+              <Pressable
+                onPress={handleBack}
+                accessibilityRole="button"
+                accessibilityLabel="Volver"
+                className="mb-10 h-10 w-10 justify-center"
+              >
                 <FontAwesome6 name="chevron-left" size={24} color="black" />
               </Pressable>
               <Text className="text-4xl pb-5 font-medium text-gray-900">
@@ -125,6 +206,8 @@ export default function EnterOtpScreen() {
                 continuación.{" "}
                 <Text
                   onPress={() => setShowChangeEmailModal(true)}
+                  accessibilityRole="link"
+                  accessibilityLabel="Cambiar dirección de email"
                   className="underline text-gray-900"
                 >
                   Cambiar dirección de email
@@ -136,10 +219,19 @@ export default function EnterOtpScreen() {
                   value={code}
                   onChange={(v) => {
                     setCode(v);
+                    setFeedback("");
                     if (error) setError("");
                   }}
                   error={error}
                 />
+                {feedback ? (
+                  <Text
+                    accessibilityLiveRegion="polite"
+                    className="pt-4 text-center text-sm leading-5 text-gray-600"
+                  >
+                    {feedback}
+                  </Text>
+                ) : null}
               </View>
 
               {countdown > 0 ? (
@@ -148,7 +240,14 @@ export default function EnterOtpScreen() {
                   revisar tu carpeta de correo no deseado
                 </Text>
               ) : (
-                <Pressable onPress={handleResend} disabled={resending}>
+                <Pressable
+                  onPress={handleResend}
+                  disabled={resending}
+                  accessibilityRole="button"
+                  accessibilityLabel="Reenviar código"
+                  accessibilityState={{ disabled: resending, busy: resending }}
+                  accessibilityValue={{ text: otpState }}
+                >
                   <Text className="underline text-center text-lg font-medium text-gray-900">
                     ¿Aún no has recibido el mensaje?
                   </Text>
@@ -186,6 +285,8 @@ export default function EnterOtpScreen() {
             <View className="mt-8 w-full flex-row gap-3">
               <Pressable
                 onPress={() => setShowChangeEmailModal(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cancelar cambio de correo"
                 className="flex-1 h-14 items-center justify-center rounded-full bg-gray-100"
               >
                 <Text className="text-base text-gray-700">Cancelar</Text>
@@ -195,6 +296,8 @@ export default function EnterOtpScreen() {
                   setShowChangeEmailModal(false);
                   router.push("/auth/enter-email");
                 }}
+                accessibilityRole="button"
+                accessibilityLabel="Cambiar correo"
                 className="flex-1 h-14 items-center justify-center rounded-full bg-gray-900"
               >
                 <Text className="text-base text-white">Cambiar</Text>
@@ -205,9 +308,18 @@ export default function EnterOtpScreen() {
       </Modal>
 
       {loading && (
-        <View className="absolute inset-0 z-50">
+        <View
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel="Verificando código"
+          className="absolute inset-0 z-50"
+        >
           <View className="flex-1 items-center justify-center bg-white">
-            <Image source={authLogo} className="h-40 w-40" resizeMode="contain" />
+            <Image
+              source={authLogo}
+              className="h-40 w-40"
+              resizeMode="contain"
+            />
           </View>
         </View>
       )}

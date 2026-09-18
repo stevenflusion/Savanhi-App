@@ -6,8 +6,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 type TabIconCode = "HOME" | "ORD" | "PER";
 
 type TabBarButtonProps = {
-  onPress?: () => void;
-  onLongPress?: () => void;
+  onPress?: ((...args: any[]) => void) | null;
+  onLongPress?: ((...args: any[]) => void) | null;
   accessibilityState?: {
     selected?: boolean;
   };

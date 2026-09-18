@@ -5,18 +5,16 @@ import {
   renderNavIcon,
 } from "@/src/components/NavBar";
 import { useAuth } from "@/src/features/auth";
-
-type TabButtonArg = {
-  accessibilityState?: {
-    selected?: boolean;
-  };
-};
+import { getTabsLayoutRedirect } from "@/src/features/auth/domain/auth-navigation";
 
 export default function TabsLayout() {
-  const { isLoggedIn, isReady } = useAuth();
+  const { user, onboardingDraft, onboardingStep, isReady } = useAuth();
   const navBarScreenOptions = useNavBarScreenOptions();
   if (!isReady) return null;
-  if (!isLoggedIn) return <Redirect href="/auth/welcome" />;
+  const redirect = getTabsLayoutRedirect(user, onboardingDraft, onboardingStep);
+  if (redirect) {
+    return <Redirect href={redirect as never} />;
+  }
 
   return (
     <Tabs initialRouteName="index" screenOptions={navBarScreenOptions}>
@@ -26,9 +24,9 @@ export default function TabsLayout() {
           title: "Inicio",
           tabBarIcon: ({ color }: { color: string; size: number }) =>
             renderNavIcon("HOME", color),
-          tabBarButton: (props: TabButtonArg) =>
+          tabBarButton: (props) =>
             createTabBarButton(props.accessibilityState?.selected === true)(
-              props
+              props,
             ),
         }}
       />
@@ -38,9 +36,9 @@ export default function TabsLayout() {
           title: "Productos",
           tabBarIcon: ({ color }: { color: string; size: number }) =>
             renderNavIcon("ORD", color),
-          tabBarButton: (props: TabButtonArg) =>
+          tabBarButton: (props) =>
             createTabBarButton(props.accessibilityState?.selected === true)(
-              props
+              props,
             ),
         }}
       />
@@ -50,9 +48,9 @@ export default function TabsLayout() {
           title: "Perfil",
           tabBarIcon: ({ color }: { color: string; size: number }) =>
             renderNavIcon("PER", color),
-          tabBarButton: (props: TabButtonArg) =>
+          tabBarButton: (props) =>
             createTabBarButton(props.accessibilityState?.selected === true)(
-              props
+              props,
             ),
         }}
       />

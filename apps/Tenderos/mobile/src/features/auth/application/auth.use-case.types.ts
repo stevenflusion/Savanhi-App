@@ -1,35 +1,41 @@
-import type { AuthUser } from "@repo/api-contracts";
+import type { AuthUser, OtpAuthState } from "@repo/api-contracts";
 
 import type { AuthCompletionResult } from "./ports/auth-remote-repository";
 import type { StoredAuthSession } from "../domain/auth.types";
 
 export type AuthRequestResult = {
   success: boolean;
+  challengeId?: string;
+  cooldownSeconds?: number;
+  retryAfterSeconds?: number;
+  state?: OtpAuthState;
   error?: string;
 };
 
 export type VerifyAuthOtpResult = AuthRequestResult & {
-  isNewUser?: boolean;
   stored?: StoredAuthSession;
 };
 
 export type CompleteAuthRegistrationResult = AuthRequestResult & {
   user?: AuthUser;
   onboardingDraft?: null;
+  stored?: StoredAuthSession | null;
   data?: AuthCompletionResult;
 };
 
 export type AuthUseCases = {
   initializeAuthSession: () => Promise<StoredAuthSession | null>;
   persistAuthSession: (stored: StoredAuthSession | null) => Promise<void>;
-  loginAuth: (email: string, password: string) => Promise<StoredAuthSession | null>;
-  registerAuth: (
-    name: string,
-    email: string,
-    password: string,
-  ) => Promise<StoredAuthSession | null>;
   requestAuthOtp: (email: string) => Promise<AuthRequestResult>;
-  verifyAuthOtp: (email: string, code: string) => Promise<VerifyAuthOtpResult>;
+  verifyAuthOtp: (
+    email: string,
+    challengeId: string,
+    code: string,
+  ) => Promise<VerifyAuthOtpResult>;
+  updateAuthProfile: (
+    stored: StoredAuthSession | null,
+    input: { name: string; storeName: string },
+  ) => Promise<AuthRequestResult & { stored?: StoredAuthSession | null }>;
   completeAuthRegistration: (
     stored: StoredAuthSession | null,
   ) => Promise<CompleteAuthRegistrationResult>;

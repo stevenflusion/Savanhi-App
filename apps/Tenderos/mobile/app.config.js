@@ -5,6 +5,7 @@ module.exports = {
     name: "Savanhi Tenderos",
     slug: "tenderos-mobile",
     version: "1.0.0",
+    platforms: ["android"],
     extra: {
       MAPBOX_ACCESS_TOKEN: process.env.MAPBOX_ACCESS_TOKEN ?? "",
     },
@@ -37,10 +38,6 @@ module.exports = {
         foregroundImage: "./assets/images/logo.png",
         backgroundColor: "#ffffff",
       },
-    },
-    ios: {
-      bundleIdentifier: "com.anonymous.tenderosmobile",
-      icon: "./assets/images/logo.png",
     },
   },
 };

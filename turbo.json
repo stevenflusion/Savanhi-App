@@ -13,7 +13,25 @@
     "check-types": {
       "dependsOn": ["^check-types"]
     },
+    "test:auth": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
     "dev": {
+      "env": [
+        "DATABASE_URL",
+        "AUTH_JWT_SECRET",
+        "PORT",
+        "OTP_PROVIDER",
+        "OTP_DEV_CODE",
+        "RESEND_API_KEY",
+        "RESEND_FROM",
+        "RESEND_TIMEOUT_MS",
+        "CORS_ORIGINS",
+        "EXPO_PUBLIC_TENDEROS_API_URL",
+        "MAPBOX_ACCESS_TOKEN"
+      ],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "cache": false,
       "persistent": true
     }

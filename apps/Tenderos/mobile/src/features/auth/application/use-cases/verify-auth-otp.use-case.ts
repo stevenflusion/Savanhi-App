@@ -12,12 +12,17 @@ export function createVerifyAuthOtpUseCase({
   remoteRepository,
   sessionRepository,
 }: VerifyAuthOtpDeps) {
-  return async function verifyAuthOtp(email: string, code: string) {
-    const result = await remoteRepository.verifyOtp(email, code);
-    if (!result.success || !result.user || !result.session) {
+  return async function verifyAuthOtp(
+    email: string,
+    challengeId: string,
+    code: string,
+  ) {
+    const result = await remoteRepository.verifyOtp(email, challengeId, code);
+    if (!result.success) {
       return {
-        success: result.success,
-        isNewUser: result.isNewUser,
+        success: false,
+        state: result.state,
+        retryAfterSeconds: result.retryAfterSeconds,
         error: result.error,
       };
     }
@@ -27,7 +32,6 @@ export function createVerifyAuthOtpUseCase({
 
     return {
       success: true,
-      isNewUser: result.isNewUser,
       stored,
     };
   };
