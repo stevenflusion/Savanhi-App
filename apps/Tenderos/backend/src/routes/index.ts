@@ -14,6 +14,7 @@ import {
 import { z } from "zod";
 
 const idParamsSchema = z.object({ id: z.string().uuid() });
+const storeIdParamsSchema = z.object({ storeId: z.string().uuid() });
 const storeSchema = z.object({
   name: z.string().min(1),
   address: z.string().nullable().optional(),
@@ -33,6 +34,15 @@ const productSchema = z.object({
 const orderStatusSchema = z.object({
   status: z.enum(ORDER_STATUSES),
 });
+const catalogAddSchema = z.object({
+  productId: z.string().uuid(),
+  price: z.number().nonnegative().nullable().optional(),
+});
+const catalogUpdateSchema = z.object({
+  price: z.number().nonnegative().nullable().optional(),
+  stock: z.number().int().nonnegative().optional(),
+  active: z.boolean().optional(),
+});
 
 type RequireRole = (roles: AuthRole[]) => RequestHandler;
 
@@ -44,7 +54,7 @@ export function createApiRouter({
   requireRole: RequireRole;
 }): ExpressRouter {
   const router = Router();
-  const { orders, products, stores } = context.repositories;
+  const { catalog, orders, products, stores } = context.repositories;
 
   router.get("/api/v1/tenderos/status", (_req, res) => {
     res.status(200).json({
@@ -78,6 +88,95 @@ export function createApiRouter({
           req.body,
         );
         res.status(201).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.get(
+    "/api/v1/tenderos/catalog",
+    requireRole(["tendero"]),
+    async (_req, res, next) => {
+      try {
+        const data = await catalog.listGlobalActive();
+        res.status(200).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.get(
+    "/api/v1/tenderos/stores/:storeId/catalog",
+    requireRole(["tendero"]),
+    validateParams(storeIdParamsSchema),
+    async (req, res, next) => {
+      try {
+        const storeIds = await stores.listIdsByOwner(req.auth?.user.id ?? "");
+        if (!storeIds.includes(String(req.params.storeId))) {
+          throw new AppError("Store does not belong to this tendero.", 403);
+        }
+        const data = await catalog.listByStoreIds([String(req.params.storeId)]);
+        res.status(200).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.post(
+    "/api/v1/tenderos/stores/:storeId/catalog",
+    requireRole(["tendero"]),
+    validateParams(storeIdParamsSchema),
+    validateBody(catalogAddSchema),
+    async (req, res, next) => {
+      try {
+        const storeIds = await stores.listIdsByOwner(req.auth?.user.id ?? "");
+        const storeId = String(req.params.storeId);
+        if (!storeIds.includes(storeId)) {
+          throw new AppError("Store does not belong to this tendero.", 403);
+        }
+        const data = await catalog.addToStore(storeId, req.body);
+        res.status(201).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.patch(
+    "/api/v1/tenderos/store-catalog-products/:id",
+    requireRole(["tendero"]),
+    validateParams(idParamsSchema),
+    validateBody(catalogUpdateSchema),
+    async (req, res, next) => {
+      try {
+        const storeIds = await stores.listIdsByOwner(req.auth?.user.id ?? "");
+        const data = await catalog.updateForStores(
+          String(req.params.id),
+          storeIds,
+          req.body,
+        );
+        res.status(200).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.delete(
+    "/api/v1/tenderos/store-catalog-products/:id",
+    requireRole(["tendero"]),
+    validateParams(idParamsSchema),
+    async (req, res, next) => {
+      try {
+        const storeIds = await stores.listIdsByOwner(req.auth?.user.id ?? "");
+        const data = await catalog.deactivateForStores(
+          String(req.params.id),
+          storeIds,
+        );
+        res.status(200).json({ data });
       } catch (error) {
         next(error);
       }
