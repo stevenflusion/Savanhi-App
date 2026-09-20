@@ -29,6 +29,20 @@
       "when": 1789530102194,
       "tag": "0003_bitter_pretty_boy",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789934471268,
+      "tag": "0004_black_morph",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789934512535,
+      "tag": "0005_lonely_marvel_zombies",
+      "breakpoints": true
     }
   ]
 }

@@ -31,6 +31,10 @@
     "./users": {
       "types": "./dist/users.d.ts",
       "import": "./dist/users.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "import": "./dist/catalog.js"
     }
   },
   "scripts": {

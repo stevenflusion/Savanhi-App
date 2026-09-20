@@ -5,6 +5,7 @@ import {
 } from "../database/connection.js";
 import { createAuthLogsRepository } from "../database/repositories/auth-logs.repository.js";
 import { createBrandsRepository } from "../database/repositories/brands.repository.js";
+import { createCatalogRepository } from "../database/repositories/catalog.repository.js";
 import { createDeliveriesRepository } from "../database/repositories/deliveries.repository.js";
 import { createOrdersRepository } from "../database/repositories/orders.repository.js";
 import { createProductsRepository } from "../database/repositories/products.repository.js";
@@ -17,6 +18,7 @@ export type BackendRepositories = {
   authLogs: ReturnType<typeof createAuthLogsRepository>;
   users: ReturnType<typeof createUsersRepository>;
   brands: ReturnType<typeof createBrandsRepository>;
+  catalog: ReturnType<typeof createCatalogRepository>;
   stores: ReturnType<typeof createStoresRepository>;
   products: ReturnType<typeof createProductsRepository>;
   orders: ReturnType<typeof createOrdersRepository>;
@@ -39,6 +41,7 @@ export function createBackendContext(
     authLogs: createAuthLogsRepository(db),
     users: createUsersRepository(db),
     brands: createBrandsRepository(db),
+    catalog: createCatalogRepository(db),
     stores: createStoresRepository(db),
     products: createProductsRepository(db),
     orders: createOrdersRepository(db),

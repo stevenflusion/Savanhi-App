@@ -1,0 +1,2 @@
+ALTER TABLE "catalog_product_identifiers" ALTER COLUMN "value" DROP NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "catalog_product_identifiers_product_kind_uidx" ON "catalog_product_identifiers" USING btree ("product_id","kind");

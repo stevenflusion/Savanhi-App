@@ -1,5 +1,6 @@
 import {
   boolean,
+  check,
   doublePrecision,
   index,
   integer,
@@ -232,6 +233,174 @@ export const products = pgTable("products", {
     .defaultNow()
     .notNull(),
 });
+
+export const catalogCategories = pgTable(
+  "catalog_categories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    slugIndex: uniqueIndex("catalog_categories_slug_uidx").on(table.slug),
+  }),
+);
+
+export const catalogBrands = pgTable(
+  "catalog_brands",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    nameIndex: uniqueIndex("catalog_brands_name_uidx").on(table.name),
+  }),
+);
+
+export const catalogProducts = pgTable(
+  "catalog_products",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    categoryId: uuid("category_id")
+      .references(() => catalogCategories.id)
+      .notNull(),
+    brandId: uuid("brand_id")
+      .references(() => catalogBrands.id)
+      .notNull(),
+    commercialName: text("commercial_name").notNull(),
+    description: text("description"),
+    variant: text("variant"),
+    presentation: text("presentation"),
+    unitsPerPackage: integer("units_per_package"),
+    netContent: numeric("net_content", { precision: 12, scale: 3 }),
+    netContentUnit: text("net_content_unit"),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    brandNameIndex: index("catalog_products_brand_name_idx").on(
+      table.brandId,
+      table.commercialName,
+    ),
+    unitsCheck: check(
+      "catalog_products_units_positive_chk",
+      sql`${table.unitsPerPackage} is null or ${table.unitsPerPackage} > 0`,
+    ),
+    contentCheck: check(
+      "catalog_products_content_positive_chk",
+      sql`${table.netContent} is null or ${table.netContent} > 0`,
+    ),
+  }),
+);
+
+export const catalogProductIdentifiers = pgTable(
+  "catalog_product_identifiers",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    productId: uuid("product_id")
+      .references(() => catalogProducts.id, { onDelete: "cascade" })
+      .notNull(),
+    kind: text("kind").notNull(),
+    value: text("value"),
+    source: text("source"),
+    verified: boolean("verified").default(false).notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    productIndex: index("catalog_product_identifiers_product_idx").on(
+      table.productId,
+    ),
+    productKindIndex: uniqueIndex(
+      "catalog_product_identifiers_product_kind_uidx",
+    ).on(table.productId, table.kind),
+    valueIndex: uniqueIndex("catalog_product_identifiers_value_uidx").on(
+      table.kind,
+      table.value,
+    ),
+  }),
+);
+
+export const catalogObservedPrices = pgTable(
+  "catalog_observed_prices",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    productId: uuid("product_id")
+      .references(() => catalogProducts.id, { onDelete: "cascade" })
+      .notNull(),
+    amount: numeric("amount", { precision: 12, scale: 2 }),
+    currency: text("currency").default("USD").notNull(),
+    city: text("city").notNull(),
+    source: text("source").notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    verified: boolean("verified").default(false).notNull(),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    productDateIndex: index("catalog_observed_prices_product_date_idx").on(
+      table.productId,
+      table.observedAt,
+    ),
+    snapshotIndex: uniqueIndex("catalog_observed_prices_snapshot_uidx").on(
+      table.productId,
+      table.source,
+      table.observedAt,
+    ),
+  }),
+);
+
+export const storeCatalogProducts = pgTable(
+  "store_catalog_products",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeId: uuid("store_id")
+      .references(() => stores.id, { onDelete: "cascade" })
+      .notNull(),
+    productId: uuid("product_id")
+      .references(() => catalogProducts.id, { onDelete: "cascade" })
+      .notNull(),
+    price: numeric("price", { precision: 12, scale: 2 }),
+    currency: text("currency").default("USD").notNull(),
+    stock: integer("stock").default(1).notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    storeProductIndex: uniqueIndex(
+      "store_catalog_products_store_product_uidx",
+    ).on(table.storeId, table.productId),
+    storeIndex: index("store_catalog_products_store_idx").on(table.storeId),
+    stockCheck: check(
+      "store_catalog_products_stock_nonnegative_chk",
+      sql`${table.stock} >= 0`,
+    ),
+    priceCheck: check(
+      "store_catalog_products_price_nonnegative_chk",
+      sql`${table.price} is null or ${table.price} >= 0`,
+    ),
+  }),
+);
 export const orders = pgTable("orders", {
   id: uuid("id").defaultRandom().primaryKey(),
   clientUserId: uuid("client_user_id").references(() => users.id),
@@ -274,6 +443,12 @@ export const schema = {
   brands,
   stores,
   products,
+  catalogCategories,
+  catalogBrands,
+  catalogProducts,
+  catalogProductIdentifiers,
+  catalogObservedPrices,
+  storeCatalogProducts,
   orders,
   orderItems,
   deliveries,
