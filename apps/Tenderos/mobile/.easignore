@@ -1,0 +1,16 @@
+# Mobile project archive exclusions.
+node_modules
+.expo/
+.codegraph/
+.pnpm-store/
+.atl/
+.pi/
+coverage
+dist
+build
+artifacts
+.env
+.env.*
+
+# Required by src/features/auth/presentation/screens/WelcomeScreen.tsx.
+!assets/bgs/home.webp

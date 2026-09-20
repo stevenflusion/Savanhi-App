@@ -4,7 +4,7 @@ import { useRouter } from "expo-router";
 import { ImageBackground, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const welcomeBackground = require("../../../../assets/bgs/home.webp");
+const welcomeBackground = require("../../../../../assets/bgs/home.webp");
 
 export default function WelcomeScreen() {
   const router = useRouter();

@@ -1,0 +1,27 @@
+# Keep the repository exclusions used by the default EAS archive.
+node_modules
+.pnp
+.pnp.js
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+coverage
+.turbo
+.expo/
+.vercel
+.next/
+out/
+build
+dist
+.codegraph/
+.pnpm-store/
+artifacts/
+.atl/
+.pi/
+.DS_Store
+*.pem
+
+# This asset is required by the mobile welcome screen and must be archived.
+!apps/Tenderos/mobile/assets/bgs/home.webp

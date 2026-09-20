@@ -8,6 +8,9 @@ module.exports = {
     platforms: ["android"],
     extra: {
       MAPBOX_ACCESS_TOKEN: process.env.MAPBOX_ACCESS_TOKEN ?? "",
+      eas: {
+        projectId: "d29db747-6120-4d25-ba2f-f9def208d544",
+      },
     },
     orientation: "portrait",
     userInterfaceStyle: "automatic",

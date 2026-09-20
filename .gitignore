@@ -40,3 +40,5 @@ yarn-error.log*
 # Local AI runtime state
 .atl/
 .pi/
+.codegraph/
+.pnpm-store/

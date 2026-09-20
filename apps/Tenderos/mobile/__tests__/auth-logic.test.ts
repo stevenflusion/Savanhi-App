@@ -16,6 +16,7 @@ import {
   getCanonicalAuthPath,
   getTabsLayoutRedirect,
   normalizeOnboardingStep,
+  ONBOARDING_PATHS,
 } from "@/src/features/auth/domain/auth-navigation";
 import type { StoredAuthSession } from "@/src/features/auth/domain/auth.types";
 import { createAuthFetchRepository } from "@/src/features/auth/infrastructure/auth-fetch-repository";
@@ -215,6 +216,10 @@ describe("OTP HTTP classification", () => {
 });
 
 describe("auth navigation", () => {
+  it("does not expose the removed identity-card onboarding step", () => {
+    expect(ONBOARDING_PATHS.has("/auth/identity-card")).toBe(false);
+  });
+
   it("uses registrationStatus as the global routing authority", () => {
     expect(getCanonicalAuthPath(null, null, null)).toBe("/auth/welcome");
     expect(getCanonicalAuthPath(user("profile_required"), null, null)).toBe(

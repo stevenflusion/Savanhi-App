@@ -1,0 +1,26 @@
+services:
+  apk:
+    build:
+      context: .
+      dockerfile: Dockerfile.apk
+    container_name: Savanhi-apk
+    working_dir: /workspace
+    environment:
+      EXPO_TOKEN: ${EXPO_TOKEN:?Set EXPO_TOKEN from your Expo access token}
+      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN:-}
+      EXPO_PUBLIC_TENDEROS_API_URL: ${EXPO_PUBLIC_TENDEROS_API_URL:?Set EXPO_PUBLIC_TENDEROS_API_URL to an HTTPS API URL}
+      CMAKE_BUILD_PARALLEL_LEVEL: "1"
+      NINJAFLAGS: "-j1"
+    volumes:
+      - .:/workspace
+      - apk-pnpm-store:/pnpm/store
+      - apk-gradle-cache:/root/.gradle
+      - ./artifacts:/workspace/artifacts
+      - apk-root-node-modules:/workspace/node_modules
+      - apk-mobile-node-modules:/workspace/apps/Tenderos/mobile/node_modules
+
+volumes:
+  apk-pnpm-store:
+  apk-gradle-cache:
+  apk-root-node-modules:
+  apk-mobile-node-modules:
