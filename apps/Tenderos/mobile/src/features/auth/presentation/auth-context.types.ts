@@ -40,6 +40,12 @@ export type AuthContextType = {
   onboardingDraft: AuthOnboardingDraft | null;
   onboardingStep: AuthOnboardingStep | null;
   isReady: boolean;
+  requestAuthenticated: (
+    path: string,
+    init?: RequestInit,
+  ) => Promise<
+    { success: true; response: Response } | { success: false; error: string }
+  >;
   logout: () => Promise<void>;
   saveProfile: (data: SaveProfileInput) => Promise<AuthActionResult>;
   savePhotos: (uris: string[]) => Promise<AuthActionResult>;

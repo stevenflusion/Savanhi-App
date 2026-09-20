@@ -41,7 +41,7 @@ async function parseJson(response: Response) {
   });
 }
 
-async function authorizedFetch(
+export async function authorizedFetch(
   accessToken: string,
   path: string,
   init: RequestInit = {},

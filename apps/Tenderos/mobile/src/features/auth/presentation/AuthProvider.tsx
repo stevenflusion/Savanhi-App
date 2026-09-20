@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useCallback,
   useMemo,
   useState,
   type ReactNode,
@@ -15,8 +16,12 @@ import type {
   StoredAuthSession,
 } from "../domain/auth.types";
 import { createAuthUseCases } from "../application/auth.use-cases";
-import { createAuthFetchRepository } from "../infrastructure/auth-fetch-repository";
+import {
+  authorizedFetch,
+  createAuthFetchRepository,
+} from "../infrastructure/auth-fetch-repository";
 import { createSecureStoreAuthSessionRepository } from "../infrastructure/session-storage";
+import { executeProtectedAuthRequest } from "../application/use-cases/execute-protected-auth-request";
 import type {
   AuthContextType,
   SaveLocationInput,
@@ -26,9 +31,11 @@ import type {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const authRemoteRepository = createAuthFetchRepository();
+const authSessionRepository = createSecureStoreAuthSessionRepository();
 const authUseCases = createAuthUseCases({
-  remoteRepository: createAuthFetchRepository(),
-  sessionRepository: createSecureStoreAuthSessionRepository(),
+  remoteRepository: authRemoteRepository,
+  sessionRepository: authSessionRepository,
 });
 
 type AuthProviderProps = {
@@ -204,6 +211,54 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return { success: result.success, error: result.error };
   };
 
+  const requestAuthenticated = useCallback(
+    async (path: string, init: RequestInit = {}) => {
+      const stored = getStoredSession();
+      if (!stored) {
+        return { success: false as const, error: "Sesión no encontrada." };
+      }
+
+      const outcome = await executeProtectedAuthRequest({
+        stored,
+        remoteRepository: authRemoteRepository,
+        sessionRepository: authSessionRepository,
+        request: async (accessToken) => {
+          try {
+            const response = await authorizedFetch(accessToken, path, init);
+            if (response.ok) return { success: true as const, data: response };
+            const data = await response.json().catch(() => ({}));
+            return {
+              success: false as const,
+              error: data.error ?? "No se pudo completar la solicitud.",
+              status: response.status,
+              unauthorized: response.status === 401,
+            };
+          } catch {
+            return {
+              success: false as const,
+              error: "No se pudo conectar con el servidor.",
+              unauthorized: false,
+            };
+          }
+        },
+      });
+
+      if (outcome.stored !== stored) syncStoredSession(outcome.stored ?? null);
+      if (!outcome.result.success) {
+        return { success: false as const, error: outcome.result.error };
+      }
+      return { success: true as const, response: outcome.result.data };
+    },
+    [
+      user,
+      onboardingDraft,
+      onboardingStep,
+      sessionAccessToken,
+      sessionRefreshToken,
+      sessionExpiresAt,
+    ],
+  );
+
   const value = useMemo(
     () => ({
       isLoggedIn: user !== null,
@@ -219,9 +274,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       requestOTP,
       verifyOTP,
       completeRegistration,
+      requestAuthenticated,
       logout,
     }),
-    [user, onboardingDraft, onboardingStep, isReady],
+    [user, onboardingDraft, onboardingStep, isReady, requestAuthenticated],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
