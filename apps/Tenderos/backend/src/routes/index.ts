@@ -1,4 +1,8 @@
 import type { AuthRole } from "@repo/api-contracts/auth";
+import {
+  catalogStoreProductAddSchema,
+  catalogStoreProductUpdateSchema,
+} from "@repo/api-contracts/catalog";
 import { ORDER_STATUSES } from "@repo/api-contracts/orders";
 import {
   AppError,
@@ -33,15 +37,6 @@ const productSchema = z.object({
 });
 const orderStatusSchema = z.object({
   status: z.enum(ORDER_STATUSES),
-});
-const catalogAddSchema = z.object({
-  productId: z.string().uuid(),
-  price: z.number().nonnegative().nullable().optional(),
-});
-const catalogUpdateSchema = z.object({
-  price: z.number().nonnegative().nullable().optional(),
-  stock: z.number().int().nonnegative().optional(),
-  active: z.boolean().optional(),
 });
 
 type RequireRole = (roles: AuthRole[]) => RequestHandler;
@@ -129,7 +124,7 @@ export function createApiRouter({
     "/api/v1/tenderos/stores/:storeId/catalog",
     requireRole(["tendero"]),
     validateParams(storeIdParamsSchema),
-    validateBody(catalogAddSchema),
+    validateBody(catalogStoreProductAddSchema),
     async (req, res, next) => {
       try {
         const storeIds = await stores.listIdsByOwner(req.auth?.user.id ?? "");
@@ -149,7 +144,7 @@ export function createApiRouter({
     "/api/v1/tenderos/store-catalog-products/:id",
     requireRole(["tendero"]),
     validateParams(idParamsSchema),
-    validateBody(catalogUpdateSchema),
+    validateBody(catalogStoreProductUpdateSchema),
     async (req, res, next) => {
       try {
         const storeIds = await stores.listIdsByOwner(req.auth?.user.id ?? "");

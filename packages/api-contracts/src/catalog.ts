@@ -1,4 +1,33 @@
+import { z } from "zod";
+
 export type CatalogCurrency = "USD";
+
+/**
+ * Canonical catalog request contract. The legacy Product model and order
+ * migration are intentionally outside this contract.
+ */
+export const catalogCurrencySchema = z.literal("USD");
+export const catalogProductIdSchema = z.uuid();
+export const catalogPriceSchema = z.number().nonnegative().nullable();
+export const catalogStockSchema = z.int().nonnegative();
+
+export const catalogStoreProductAddSchema = z.strictObject({
+  productId: catalogProductIdSchema,
+  price: catalogPriceSchema.optional(),
+});
+
+export const catalogStoreProductUpdateSchema = z
+  .strictObject({
+    price: catalogPriceSchema.optional(),
+    stock: catalogStockSchema.optional(),
+    active: z.boolean().optional(),
+  })
+  .refine(
+    (payload) => Object.values(payload).some((value) => value !== undefined),
+    {
+      message: "At least one catalog store product field is required.",
+    },
+  );
 
 export type CatalogCategory = {
   id: string;
@@ -68,16 +97,13 @@ export type CatalogStoreProduct = StoreCatalogProduct & {
   product: CatalogProduct;
 };
 
-export type CatalogStoreProductRequest = {
-  productId: string;
-  price?: number | null;
-};
+export type CatalogStoreProductRequest = z.infer<
+  typeof catalogStoreProductAddSchema
+>;
 
-export type CatalogStoreProductUpdateRequest = {
-  price?: number | null;
-  stock?: number;
-  active?: boolean;
-};
+export type CatalogStoreProductUpdateRequest = z.infer<
+  typeof catalogStoreProductUpdateSchema
+>;
 
 export type CatalogProductsResponse = {
   data: CatalogProduct[];
