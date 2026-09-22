@@ -62,17 +62,17 @@ The roadmap names the canonical catalog contract as the next task. A shared exec
 - [x] **CAT-1 — Executable canonical catalog specs**
   - Route: delegated writer; shared contract, backend route, dependency metadata, and domain tests span multiple non-trivial files.
   - Acceptance: the backend imports shared catalog schemas; focused tests prove stock/price/UUID/update invariants; package type checks pass.
-  - Verification: `pnpm --filter @repo/backend-core test -- src/catalog/catalog-contract.test.ts` and relevant type checks.
+  - Verification: `pnpm --filter @repo/backend-core test:catalog` and relevant type checks.
   - Evidence: shared strict Zod schemas exported from `@repo/api-contracts/catalog` and consumed by Tenderos routes; 3/3 focused contract tests pass; API contracts, backend core, and Tenderos backend type checks pass.
 - [x] **NAV-1 — Product-centered bottom navigation**
   - Route: delegated writer; navigation layout, bar component, route intent, Products workspace, and Pedidos state span multiple files.
   - Acceptance: the five destinations match the specification; icons are vector-based; only `+` has no visible text; `+` opens add-product mode; no frontend tests are added.
   - Verification: mobile TypeScript check plus runtime/static inspection.
   - Evidence: floating five-action bar uses Ionicons and labeled lateral tabs; central accessible `+` opens Products with add intent; Products defaults to inventory; Pedidos is explicitly unavailable. Mobile type check, Prettier check, Android Expo export, and `git diff --check` pass.
-- [ ] **VER-1 — Integrated verification and correction**
+- [x] **VER-1 — Integrated verification and correction**
   - Route: delegated verifier independent from implementation.
   - Acceptance: contract tests, relevant builds/type checks, and navigation inspection pass; failures are fixed and re-verified.
-  - Evidence: pending.
+  - Evidence: independent GPT-5.6 Terra verifier reported PASS. Contract tests pass 3/3; API contracts, backend core, Tenderos backend, and mobile type checks pass; Prettier and diff checks pass; Expo produced an Android bundle. Static inspection confirmed the specified five actions, vector icons, lateral labels, unlabeled accessible `+`, repeatable add intent, and truthful Pedidos state.
 
 ## Progress
 
@@ -81,8 +81,10 @@ The roadmap names the canonical catalog contract as the next task. A shared exec
 - 2026-09-21: CAT-1 implemented and verified. The generic backend suite still requires PostgreSQL, so the new `test:catalog` runner isolates the executable contract specs.
 - 2026-09-21: RDD assessment for CAT-1 was unavailable because the active OpenCode runtime is not eligible for immutable receipt review; ordinary verification remains recorded.
 - 2026-09-21: NAV-1 implemented and verified locally. Running authored changes crossed the review budget; the user selected `feature-branch-chain` with CAT-1 and NAV-1 as separate slices.
-- Current phase: CAT-1 and NAV-1 complete; independent VER-1 pending.
+- 2026-09-21: NAV-1 closed in commit `7411059`. RDD assessment remained unavailable for the OpenCode runtime.
+- 2026-09-21: Independent VER-1 passed without corrections. The generic backend suite remains environment-dependent on PostgreSQL; focused catalog specs pass through `test:catalog`.
+- Current phase: implementation, verification, and ODD finalization complete.
 
 ## Next step
 
-Close NAV-1 with its work-unit commit, then delegate independent integrated verification.
+No implementation work remains. Push and chained PR creation require an explicit user request.
