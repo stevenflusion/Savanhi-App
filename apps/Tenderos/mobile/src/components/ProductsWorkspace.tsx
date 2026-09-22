@@ -3,7 +3,7 @@ import type {
   CatalogStoreProduct,
 } from "@repo/api-contracts/catalog";
 import { useFocusEffect } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useAuth } from "../features/auth";
 import { AlertCard } from "./AlertCard";
@@ -54,13 +54,17 @@ function toProduct(item: CatalogStoreProduct): Product {
   };
 }
 
-export function ProductsWorkspace() {
+export function ProductsWorkspace({
+  addIntent = false,
+}: {
+  addIntent?: boolean;
+}) {
   const { requestAuthenticated } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [globalProducts, setGlobalProducts] = useState<CatalogProduct[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [storeId, setStoreId] = useState("");
-  const [tool, setTool] = useState<Tool>("add");
+  const [tool, setTool] = useState<Tool>("inventory");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [saleQty, setSaleQty] = useState("1");
   const [search, setSearch] = useState("");
@@ -69,6 +73,10 @@ export function ProductsWorkspace() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (addIntent) setTool("add");
+  }, [addIntent]);
 
   const requestJson = useCallback(
     async (path: string, init?: RequestInit) => {

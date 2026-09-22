@@ -1,99 +1,129 @@
-import type { ReactNode } from "react";
-import type { StyleProp, ViewStyle } from "react-native";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import type { ComponentProps } from "react";
 import { Pressable, Text, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-type TabIconCode = "HOME" | "ORD" | "PER";
+type TabName = "index" | "products" | "orders" | "profile";
 
-type TabBarButtonProps = {
-  onPress?: ((...args: any[]) => void) | null;
-  onLongPress?: ((...args: any[]) => void) | null;
-  accessibilityState?: {
-    selected?: boolean;
-  };
-  accessibilityLabel?: string;
-  accessibilityHint?: string;
-  testID?: string;
-  children?: ReactNode;
-  style?: StyleProp<ViewStyle>;
+const tabDetails: Record<
+  TabName,
+  { label: string; icon: ComponentProps<typeof Ionicons>["name"] }
+> = {
+  index: { label: "Inicio", icon: "home-outline" },
+  products: { label: "Productos", icon: "cube-outline" },
+  orders: { label: "Pedidos", icon: "receipt-outline" },
+  profile: { label: "Perfil", icon: "person-outline" },
 };
-
-type TabButtonProps = TabBarButtonProps & {
-  isFocused: boolean;
-};
-
-function TabButton({ children, isFocused, style, ...props }: TabButtonProps) {
-  return (
-    <Pressable
-      {...props}
-      style={style}
-      accessibilityRole="tab"
-      accessibilityState={{ selected: isFocused }}
-      className={`mx-1 min-h-[44px] flex-1 items-center justify-center rounded-xl px-2 py-1 ${
-        isFocused ? "bg-emerald-100" : "bg-transparent"
-      }`}
-      hitSlop={6}
-    >
-      <View
-        className={`mb-1 h-1.5 w-6 rounded-full ${
-          isFocused ? "bg-emerald-600" : "bg-transparent"
-        }`}
-      />
-      {children}
-    </Pressable>
-  );
-}
 
 export function useNavBarScreenOptions() {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const horizontalPadding = width < 360 ? 6 : 10;
-  const safeBottom = Math.max(insets.bottom, 8);
 
   return {
     headerShown: false,
-    tabBarActiveTintColor: "#047857",
-    tabBarInactiveTintColor: "#6b7280",
     tabBarHideOnKeyboard: true,
     tabBarStyle: {
-      backgroundColor: "#f8fafc",
-      borderTopColor: "#e2e8f0",
-      borderTopWidth: 1,
-      height: 58 + safeBottom,
-      paddingBottom: safeBottom,
-      paddingTop: Math.max(6, Math.floor(insets.top * 0.04)),
-      paddingHorizontal: horizontalPadding,
-    },
-    tabBarItemStyle: {
-      minWidth: 0,
-      flex: 1,
-    },
-    tabBarLabelStyle: {
-      fontSize: width < 360 ? 10 : 11,
-      fontWeight: "600" as const,
-      letterSpacing: 0,
+      backgroundColor: "transparent",
+      borderTopWidth: 0,
+      elevation: 0,
+      height: 84 + Math.max(insets.bottom, 8),
+      padding: 0,
     },
   };
 }
 
-export function renderNavIcon(code: TabIconCode, color: string) {
-  const map: Record<TabIconCode, string> = {
-    HOME: "⌂",
-    ORD: "▦",
-    PER: "◉",
+type FloatingTabBarProps = {
+  state: { index: number; routes: { key: string; name: string }[] };
+  navigation: unknown;
+};
+
+export function FloatingTabBar({ state, navigation }: FloatingTabBarProps) {
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const iconSize = width < 360 ? 20 : 22;
+  const navigate = (name: TabName, params?: { intent?: "add" }) => {
+    (
+      navigation as unknown as {
+        navigate: (route: string, routeParams?: { intent?: "add" }) => void;
+      }
+    ).navigate(name, params);
   };
 
   return (
-    <View className="h-[18px] w-[18px] items-center justify-center">
-      <Text style={{ color }} className="text-[14px] font-semibold">
-        {map[code]}
-      </Text>
+    <View
+      className="justify-end px-4"
+      style={{ paddingBottom: Math.max(insets.bottom, 8) }}
+    >
+      <View className="h-16 flex-row items-center rounded-full border border-slate-200 bg-white px-1 shadow-lg">
+        {state.routes.slice(0, 2).map((route, index) => {
+          const details = tabDetails[route.name as TabName];
+          const focused = state.index === index;
+          return (
+            <NavItem
+              key={route.key}
+              details={details}
+              focused={focused}
+              iconSize={iconSize}
+              onPress={() => navigate(route.name as TabName)}
+            />
+          );
+        })}
+
+        <Pressable
+          accessibilityLabel="Agregar producto"
+          accessibilityHint="Abre Productos para agregar un producto"
+          accessibilityRole="button"
+          className="-mt-8 min-h-[52px] min-w-[52px] items-center justify-center rounded-full bg-emerald-600 shadow-lg"
+          onPress={() => navigate("products", { intent: "add" })}
+          style={{ elevation: 6 }}
+        >
+          <Ionicons name="add" size={30} color="#ffffff" />
+        </Pressable>
+
+        {state.routes.slice(2).map((route, index) => {
+          const details = tabDetails[route.name as TabName];
+          const focused = state.index === index + 2;
+          return (
+            <NavItem
+              key={route.key}
+              details={details}
+              focused={focused}
+              iconSize={iconSize}
+              onPress={() => navigate(route.name as TabName)}
+            />
+          );
+        })}
+      </View>
     </View>
   );
 }
 
-export function createTabBarButton(isFocused: boolean) {
-  return function Button(props: TabBarButtonProps) {
-    return <TabButton {...props} isFocused={isFocused} />;
-  };
+function NavItem({
+  details,
+  focused,
+  iconSize,
+  onPress,
+}: {
+  details: { label: string; icon: ComponentProps<typeof Ionicons>["name"] };
+  focused: boolean;
+  iconSize: number;
+  onPress: () => void;
+}) {
+  const color = focused ? "#047857" : "#64748b";
+
+  return (
+    <Pressable
+      accessibilityLabel={details.label}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: focused }}
+      className="min-h-[44px] flex-1 items-center justify-center gap-0.5 rounded-full px-1"
+      onPress={onPress}
+    >
+      <Ionicons name={details.icon} size={iconSize} color={color} />
+      <Text
+        className={`text-[10px] ${focused ? "font-bold text-emerald-700" : "font-semibold text-slate-500"}`}
+      >
+        {details.label}
+      </Text>
+    </Pressable>
+  );
 }

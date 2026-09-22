@@ -1,8 +1,7 @@
 import { Redirect, Tabs } from "expo-router";
 import {
-  createTabBarButton,
+  FloatingTabBar,
   useNavBarScreenOptions,
-  renderNavIcon,
 } from "@/src/components/NavBar";
 import { useAuth } from "@/src/features/auth";
 import { getTabsLayoutRedirect } from "@/src/features/auth/domain/auth-navigation";
@@ -17,41 +16,33 @@ export default function TabsLayout() {
   }
 
   return (
-    <Tabs initialRouteName="index" screenOptions={navBarScreenOptions}>
+    <Tabs
+      initialRouteName="index"
+      screenOptions={navBarScreenOptions}
+      tabBar={(props) => <FloatingTabBar {...props} />}
+    >
       <Tabs.Screen
         name="index"
         options={{
           title: "Inicio",
-          tabBarIcon: ({ color }: { color: string; size: number }) =>
-            renderNavIcon("HOME", color),
-          tabBarButton: (props) =>
-            createTabBarButton(props.accessibilityState?.selected === true)(
-              props,
-            ),
+        }}
+      />
+      <Tabs.Screen
+        name="products"
+        options={{
+          title: "Productos",
         }}
       />
       <Tabs.Screen
         name="orders"
         options={{
-          title: "Productos",
-          tabBarIcon: ({ color }: { color: string; size: number }) =>
-            renderNavIcon("ORD", color),
-          tabBarButton: (props) =>
-            createTabBarButton(props.accessibilityState?.selected === true)(
-              props,
-            ),
+          title: "Pedidos",
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: "Perfil",
-          tabBarIcon: ({ color }: { color: string; size: number }) =>
-            renderNavIcon("PER", color),
-          tabBarButton: (props) =>
-            createTabBarButton(props.accessibilityState?.selected === true)(
-              props,
-            ),
         }}
       />
     </Tabs>
