@@ -8,12 +8,28 @@ export type CatalogCurrency = "USD";
  */
 export const catalogCurrencySchema = z.literal("USD");
 export const catalogProductIdSchema = z.uuid();
-export const catalogPriceSchema = z.number().nonnegative().nullable();
-export const catalogStockSchema = z.int().nonnegative();
+export const catalogSaleUnitSchema = z.enum(["unidad", "kg", "g", "L", "ml"]);
+export const catalogStockSchema = z
+  .number()
+  .finite()
+  .nonnegative()
+  .refine(
+    (value) => Number(value.toFixed(3)) === value,
+    "Stock supports at most three decimal places.",
+  );
+export const catalogPriceSchema = z
+  .number()
+  .positive()
+  .refine(
+    (value) => Number(value.toFixed(2)) === value,
+    "Price supports at most two decimal places.",
+  );
 
 export const catalogStoreProductAddSchema = z.strictObject({
   productId: catalogProductIdSchema,
-  price: catalogPriceSchema.optional(),
+  price: catalogPriceSchema,
+  saleUnit: catalogSaleUnitSchema,
+  integerOnly: z.boolean(),
 });
 
 export const catalogStoreProductUpdateSchema = z
@@ -21,13 +37,63 @@ export const catalogStoreProductUpdateSchema = z
     price: catalogPriceSchema.optional(),
     stock: catalogStockSchema.optional(),
     active: z.boolean().optional(),
+    saleUnit: catalogSaleUnitSchema.optional(),
+    integerOnly: z.boolean().optional(),
   })
   .refine(
-    (payload) => Object.values(payload).some((value) => value !== undefined),
+    (payload) =>
+      Object.values(payload).some((value) => value !== undefined) &&
+      !(
+        payload.stock !== undefined &&
+        payload.stock % 1 !== 0 &&
+        (payload.saleUnit === "unidad" || payload.integerOnly === true)
+      ),
     {
       message: "At least one catalog store product field is required.",
     },
   );
+
+const customProductFields = {
+  name: z.string().trim().min(1),
+  description: z.string().nullable().optional(),
+  brandId: z.uuid().nullable().optional(),
+  categoryId: z.uuid().nullable().optional(),
+  price: catalogPriceSchema,
+  stock: catalogStockSchema.default(1),
+  saleUnit: catalogSaleUnitSchema.default("unidad"),
+  integerOnly: z.boolean().default(false),
+};
+export const storeProductCreateSchema = z
+  .strictObject(customProductFields)
+  .refine(
+    (payload) =>
+      !(
+        (payload.saleUnit === "unidad" || payload.integerOnly) &&
+        !Number.isInteger(payload.stock)
+      ),
+    "This sale unit requires whole-number stock.",
+  );
+export const storeProductUpdateSchema = z
+  .strictObject({
+    ...customProductFields,
+    active: z.boolean().optional(),
+  })
+  .partial()
+  .refine(
+    (payload) => Object.keys(payload).length > 0,
+    "At least one product field is required.",
+  )
+  .refine(
+    (payload) =>
+      !(
+        payload.stock !== undefined &&
+        payload.stock % 1 !== 0 &&
+        (payload.saleUnit === "unidad" || payload.integerOnly === true)
+      ),
+  );
+export const storeProductCategoryCreateSchema = z.strictObject({
+  name: z.string().trim().min(1),
+});
 
 export type CatalogCategory = {
   id: string;
@@ -91,6 +157,9 @@ export type StoreCatalogProduct = {
   currency: CatalogCurrency;
   stock: number;
   active: boolean;
+  saleUnit: "unidad" | "kg" | "g" | "L" | "ml";
+  integerOnly: boolean;
+  pricePending: boolean;
 };
 
 export type CatalogStoreProduct = StoreCatalogProduct & {

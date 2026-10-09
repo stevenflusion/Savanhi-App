@@ -7,11 +7,13 @@ import {
   catalogStoreProductUpdateSchema,
 } from "@repo/api-contracts/catalog";
 
-test("catalog add contract requires a UUID product ID and accepts nullable prices", () => {
+test("catalog add contract requires a UUID product ID and positive price", () => {
   assert.equal(
     catalogStoreProductAddSchema.safeParse({
       productId: randomUUID(),
-      price: null,
+      price: 1.25,
+      saleUnit: "unidad",
+      integerOnly: true,
     }).success,
     true,
   );
@@ -22,15 +24,63 @@ test("catalog add contract requires a UUID product ID and accepts nullable price
   assert.equal(
     catalogStoreProductAddSchema.safeParse({
       productId: randomUUID(),
-      price: -0.01,
+      price: 0,
+      saleUnit: "unidad",
+      integerOnly: true,
     }).success,
     false,
   );
 });
 
-test("catalog update contract accepts only non-negative integer stock and non-negative prices", () => {
+test("catalog assignment requires a positive USD price and explicit sale rules", () => {
+  const productId = randomUUID();
   assert.equal(
-    catalogStoreProductUpdateSchema.safeParse({ stock: 0, price: 0 }).success,
+    catalogStoreProductAddSchema.safeParse({
+      productId,
+      price: 1.15,
+      saleUnit: "kg",
+      integerOnly: false,
+    }).success,
+    true,
+  );
+  for (const price of [undefined, null, 0, -1, 1.234]) {
+    assert.equal(
+      catalogStoreProductAddSchema.safeParse({
+        productId,
+        price,
+        saleUnit: "unidad",
+        integerOnly: true,
+      }).success,
+      false,
+    );
+  }
+});
+
+test("sale stock accepts whole units and three-decimal fractional units only", () => {
+  assert.equal(
+    catalogStoreProductUpdateSchema.safeParse({ stock: 1 }).success,
+    true,
+  );
+  assert.equal(
+    catalogStoreProductUpdateSchema.safeParse({ stock: 0.125 }).success,
+    true,
+  );
+  assert.equal(
+    catalogStoreProductUpdateSchema.safeParse({ stock: 0.1234 }).success,
+    false,
+  );
+  assert.equal(
+    catalogStoreProductUpdateSchema.safeParse({
+      saleUnit: "unidad",
+      stock: 1.5,
+    }).success,
+    false,
+  );
+});
+
+test("catalog update contract accepts nonnegative three-decimal stock and positive prices", () => {
+  assert.equal(
+    catalogStoreProductUpdateSchema.safeParse({ stock: 0, price: 1 }).success,
     true,
   );
   assert.equal(
@@ -38,11 +88,11 @@ test("catalog update contract accepts only non-negative integer stock and non-ne
     false,
   );
   assert.equal(
-    catalogStoreProductUpdateSchema.safeParse({ stock: 1.5 }).success,
-    false,
+    catalogStoreProductUpdateSchema.safeParse({ stock: 0.125 }).success,
+    true,
   );
   assert.equal(
-    catalogStoreProductUpdateSchema.safeParse({ price: -0.01 }).success,
+    catalogStoreProductUpdateSchema.safeParse({ price: 0 }).success,
     false,
   );
 });

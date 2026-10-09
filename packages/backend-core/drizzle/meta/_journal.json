@@ -43,6 +43,13 @@
       "when": 1789934512535,
       "tag": "0005_lonely_marvel_zombies",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791588249598,
+      "tag": "0006_superb_silvermane",
+      "breakpoints": true
     }
   ]
 }

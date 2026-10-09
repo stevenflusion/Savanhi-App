@@ -220,19 +220,49 @@ export const stores = pgTable("stores", {
     .defaultNow()
     .notNull(),
 });
-export const products = pgTable("products", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  storeId: uuid("store_id").references(() => stores.id),
-  brandId: uuid("brand_id").references(() => brands.id),
-  name: text("name").notNull(),
-  description: text("description"),
-  price: numeric("price", { precision: 12, scale: 2 }).notNull(),
-  stock: integer("stock").default(0).notNull(),
-  active: boolean("active").default(true).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const products = pgTable(
+  "products",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeId: uuid("store_id").references(() => stores.id),
+    brandId: uuid("brand_id").references(() => brands.id),
+    name: text("name").notNull(),
+    description: text("description"),
+    price: numeric("price", { precision: 12, scale: 2 }),
+    stock: numeric("stock", { precision: 12, scale: 3 })
+      .$type<number>()
+      .default(1)
+      .notNull(),
+    saleUnit: text("sale_unit").default("unidad").notNull(),
+    integerOnly: boolean("integer_only").default(false).notNull(),
+    categoryId: uuid("category_id").references(() => catalogCategories.id),
+    storeCategoryId: uuid("store_category_id").references(
+      () => storeProductCategories.id,
+    ),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    priceActiveCheck: check(
+      "products_active_price_positive_chk",
+      sql`${table.price} is not null and ${table.price} > 0 or not ${table.active}`,
+    ),
+    stockCheck: check(
+      "products_stock_nonnegative_chk",
+      sql`${table.stock} >= 0`,
+    ),
+    saleUnitCheck: check(
+      "products_sale_unit_chk",
+      sql`${table.saleUnit} in ('unidad', 'kg', 'g', 'L', 'ml')`,
+    ),
+    integerStockCheck: check(
+      "products_integer_stock_chk",
+      sql`(${table.saleUnit} <> 'unidad' and not ${table.integerOnly}) or ${table.stock} = trunc(${table.stock})`,
+    ),
+  }),
+);
 
 export const catalogCategories = pgTable(
   "catalog_categories",
@@ -377,7 +407,9 @@ export const storeCatalogProducts = pgTable(
       .notNull(),
     price: numeric("price", { precision: 12, scale: 2 }),
     currency: text("currency").default("USD").notNull(),
-    stock: integer("stock").default(1).notNull(),
+    stock: numeric("stock", { precision: 12, scale: 3 }).default("1").notNull(),
+    saleUnit: text("sale_unit").default("unidad").notNull(),
+    integerOnly: boolean("integer_only").default(false).notNull(),
     active: boolean("active").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -395,9 +427,38 @@ export const storeCatalogProducts = pgTable(
       "store_catalog_products_stock_nonnegative_chk",
       sql`${table.stock} >= 0`,
     ),
+    saleUnitCheck: check(
+      "store_catalog_products_sale_unit_chk",
+      sql`${table.saleUnit} in ('unidad', 'kg', 'g', 'L', 'ml')`,
+    ),
+    integerStockCheck: check(
+      "store_catalog_products_integer_stock_chk",
+      sql`(${table.saleUnit} <> 'unidad' and not ${table.integerOnly}) or ${table.stock} = trunc(${table.stock})`,
+    ),
     priceCheck: check(
       "store_catalog_products_price_nonnegative_chk",
-      sql`${table.price} is null or ${table.price} >= 0`,
+      sql`${table.price} is not null and ${table.price} > 0 or not ${table.active}`,
+    ),
+  }),
+);
+
+export const storeProductCategories = pgTable(
+  "store_product_categories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeId: uuid("store_id")
+      .references(() => stores.id, { onDelete: "cascade" })
+      .notNull(),
+    name: text("name").notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    nameIndex: uniqueIndex("store_product_categories_store_name_uidx").on(
+      table.storeId,
+      table.name,
     ),
   }),
 );
@@ -449,6 +510,7 @@ export const schema = {
   catalogProductIdentifiers,
   catalogObservedPrices,
   storeCatalogProducts,
+  storeProductCategories,
   orders,
   orderItems,
   deliveries,

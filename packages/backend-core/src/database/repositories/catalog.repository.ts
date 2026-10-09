@@ -14,6 +14,7 @@ import {
   catalogProductIdentifiers,
   catalogProducts,
   storeCatalogProducts,
+  storeProductCategories,
 } from "../schema.js";
 
 type CatalogProductRow = {
@@ -79,8 +80,12 @@ function mapStoreCatalogProduct(
     price:
       row.storeProduct.price === null ? null : Number(row.storeProduct.price),
     currency: row.storeProduct.currency as "USD",
-    stock: row.storeProduct.stock,
+    stock: Number(row.storeProduct.stock),
     active: row.storeProduct.active,
+    saleUnit: row.storeProduct.saleUnit as CatalogStoreProduct["saleUnit"],
+    integerOnly: row.storeProduct.integerOnly,
+    pricePending:
+      row.storeProduct.price === null || Number(row.storeProduct.price) <= 0,
     product,
   };
 }
@@ -236,7 +241,9 @@ export function createCatalogRepository(db: DatabaseConnection) {
             payload.price === undefined || payload.price === null
               ? null
               : String(payload.price),
-          stock: 1,
+          stock: "1",
+          saleUnit: payload.saleUnit,
+          integerOnly: payload.integerOnly,
         })
         .onConflictDoNothing({
           target: [
@@ -265,14 +272,40 @@ export function createCatalogRepository(db: DatabaseConnection) {
     ) {
       if (!storeIds.length)
         throw new AppError("Store catalog product not found.", 404);
+      const [current] = await db
+        .select()
+        .from(storeCatalogProducts)
+        .where(
+          and(
+            eq(storeCatalogProducts.id, id),
+            inArray(storeCatalogProducts.storeId, storeIds),
+          ),
+        );
+      if (!current) throw new AppError("Store catalog product not found.", 404);
+      const nextStock = payload.stock ?? Number(current.stock);
+      const nextUnit = payload.saleUnit ?? current.saleUnit;
+      const nextIntegerOnly = payload.integerOnly ?? current.integerOnly;
+      if (
+        (nextUnit === "unidad" || nextIntegerOnly) &&
+        !Number.isInteger(nextStock)
+      )
+        throw new AppError("This sale unit requires whole-number stock.", 400);
+      if (payload.active === true && payload.price === undefined) {
+        if (current.price === null || Number(current.price) <= 0)
+          throw new AppError(
+            "A positive price is required before activation.",
+            400,
+          );
+      }
       const [row] = await db
         .update(storeCatalogProducts)
         .set({
           price:
-            payload.price === undefined || payload.price === null
-              ? payload.price
-              : String(payload.price),
-          stock: payload.stock,
+            payload.price === undefined ? undefined : String(payload.price),
+          stock:
+            payload.stock === undefined ? undefined : String(payload.stock),
+          saleUnit: payload.saleUnit,
+          integerOnly: payload.integerOnly,
           active: payload.active,
           updatedAt: new Date(),
         })
@@ -302,6 +335,72 @@ export function createCatalogRepository(db: DatabaseConnection) {
         .returning();
       if (!row) throw new AppError("Store catalog product not found.", 404);
       return findStoreCatalogProduct(row.id, row.storeId);
+    },
+
+    async listCategoriesForStore(storeId: string) {
+      const [shared, owned] = await Promise.all([
+        db
+          .select({
+            id: catalogCategories.id,
+            name: catalogCategories.name,
+            active: catalogCategories.active,
+          })
+          .from(catalogCategories)
+          .where(eq(catalogCategories.active, true))
+          .orderBy(catalogCategories.name),
+        db
+          .select({
+            id: storeProductCategories.id,
+            name: storeProductCategories.name,
+            active: storeProductCategories.active,
+          })
+          .from(storeProductCategories)
+          .where(
+            and(
+              eq(storeProductCategories.storeId, storeId),
+              eq(storeProductCategories.active, true),
+            ),
+          )
+          .orderBy(storeProductCategories.name),
+      ]);
+      return [
+        ...shared.map((category) => ({
+          ...category,
+          source: "shared" as const,
+        })),
+        ...owned.map((category) => ({ ...category, source: "store" as const })),
+      ];
+    },
+
+    async createCategoryForStore(storeId: string, payload: { name: string }) {
+      const [category] = await db
+        .insert(storeProductCategories)
+        .values({ storeId, name: payload.name.trim() })
+        .onConflictDoNothing()
+        .returning();
+      if (category)
+        return {
+          id: category.id,
+          name: category.name,
+          active: category.active,
+          source: "store" as const,
+        };
+      const [existing] = await db
+        .select()
+        .from(storeProductCategories)
+        .where(
+          and(
+            eq(storeProductCategories.storeId, storeId),
+            eq(storeProductCategories.name, payload.name.trim()),
+          ),
+        );
+      if (!existing) throw new AppError("Unable to create category.", 502);
+      return {
+        id: existing.id,
+        name: existing.name,
+        active: existing.active,
+        source: "store" as const,
+      };
     },
   };
 }
