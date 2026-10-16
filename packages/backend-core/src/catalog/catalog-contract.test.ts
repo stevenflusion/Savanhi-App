@@ -78,6 +78,78 @@ test("sale stock accepts whole units and three-decimal fractional units only", (
   );
 });
 
+test("private product requests require a positive price, supported unit, and valid stock precision", async () => {
+  const { storeProductCreateSchema } =
+    await import("@repo/api-contracts/catalog");
+  assert.equal(
+    storeProductCreateSchema.safeParse({
+      name: "Rice",
+      price: 2,
+      stock: 1,
+      saleUnit: "kg",
+      integerOnly: false,
+    }).success,
+    true,
+  );
+  assert.equal(
+    storeProductCreateSchema.parse({ name: "Rice", price: 2 }).stock,
+    1,
+  );
+  assert.equal(
+    storeProductCreateSchema.safeParse({
+      name: "Rice",
+      price: 0,
+      stock: 1,
+      saleUnit: "kg",
+      integerOnly: false,
+    }).success,
+    false,
+  );
+  assert.equal(
+    storeProductCreateSchema.safeParse({
+      name: "Rice",
+      price: 2,
+      stock: 1.5,
+      saleUnit: "unidad",
+      integerOnly: false,
+    }).success,
+    false,
+  );
+  assert.equal(
+    storeProductCreateSchema.safeParse({
+      name: "Rice",
+      price: 2,
+      stock: 1.5,
+      saleUnit: "kg",
+      integerOnly: true,
+    }).success,
+    false,
+  );
+  assert.equal(
+    storeProductCreateSchema.safeParse({
+      name: "Rice",
+      price: 2,
+      stock: 1.2345,
+      saleUnit: "kg",
+      integerOnly: false,
+    }).success,
+    false,
+  );
+});
+
+test("store category creation requires a non-empty name", async () => {
+  const { storeProductCategoryCreateSchema } =
+    await import("@repo/api-contracts/catalog");
+  assert.equal(
+    storeProductCategoryCreateSchema.safeParse({ name: "Pantry" }).success,
+    true,
+  );
+  assert.equal(
+    storeProductCategoryCreateSchema.safeParse({ name: " " }).success,
+    false,
+  );
+});
+
 test("catalog update contract accepts nonnegative three-decimal stock and positive prices", () => {
   assert.equal(
     catalogStoreProductUpdateSchema.safeParse({ stock: 0, price: 1 }).success,

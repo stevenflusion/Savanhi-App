@@ -38,7 +38,11 @@ export function createBackendApp({
   app.use(requestContext);
   app.use(express.json({ limit: "100kb" }));
   app.use(rateLimit(createMemoryRateLimiter(), "api", env.rateLimits.api));
-  app.use(morgan("dev"));
+  app.use(
+    morgan(
+      "[http] :remote-addr :method :url :status :response-time ms - :user-agent",
+    ),
+  );
 
   app.use(createHealthRouter(env));
   routers.forEach((router) => app.use(router));

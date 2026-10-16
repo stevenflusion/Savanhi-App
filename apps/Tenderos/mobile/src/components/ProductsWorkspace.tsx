@@ -15,6 +15,8 @@ import { InventorySummaryCard } from "./InventorySummaryCard";
 
 type Tool = "add" | "sale" | "inventory";
 type Store = { id: string; name?: string };
+type Category = { id: string; name: string; shared?: boolean };
+type SaleUnit = Product["saleUnit"];
 
 function productLabel(product: CatalogProduct) {
   return [
@@ -28,6 +30,10 @@ function productLabel(product: CatalogProduct) {
 }
 
 function toProduct(item: CatalogStoreProduct): Product {
+  const inventoryRules = item as CatalogStoreProduct & {
+    saleUnit?: SaleUnit;
+    integerOnly?: boolean;
+  };
   const observedPrice =
     item.product.observedPrices
       .filter(
@@ -51,6 +57,10 @@ function toProduct(item: CatalogStoreProduct): Product {
     observedPrice,
     stock: item.stock,
     active: item.active,
+    saleUnit: inventoryRules.saleUnit ?? "unidad",
+    integerOnly: inventoryRules.integerOnly ?? false,
+    source: "shared",
+    pricePending: item.price === null || item.price <= 0,
   };
 }
 
@@ -73,6 +83,14 @@ export function ProductsWorkspace({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [categoriesList, setCategoriesList] = useState<Category[]>([]);
+  const [saleUnit, setSaleUnit] = useState<SaleUnit>("unidad");
+  const [integerOnly, setIntegerOnly] = useState(false);
+  const [priceInput, setPriceInput] = useState("");
+  const [privateName, setPrivateName] = useState("");
+  const [privateCategory, setPrivateCategory] = useState("");
+  const [newCategory, setNewCategory] = useState("");
+  const [creatingCategory, setCreatingCategory] = useState(false);
 
   useEffect(() => {
     if (addIntent) setTool("add");
@@ -97,7 +115,10 @@ export function ProductsWorkspace({
         requestJson("/api/v1/tenderos/catalog"),
       ]);
       const nextStores = (storesResponse.data ?? []) as Store[];
-      const nextStoreId = nextStores[0]?.id ?? "";
+      const nextStoreId =
+        storeId && nextStores.some((store) => store.id === storeId)
+          ? storeId
+          : (nextStores[0]?.id ?? "");
       setStores(nextStores);
       setStoreId(nextStoreId);
       setGlobalProducts((globalResponse.data ?? []) as CatalogProduct[]);
@@ -105,12 +126,47 @@ export function ProductsWorkspace({
         setProducts([]);
         return;
       }
-      const storeResponse = await requestJson(
-        `/api/v1/tenderos/stores/${nextStoreId}/catalog`,
+      const [storeResponse, privateResponse, categoriesResponse] =
+        await Promise.all([
+          requestJson(`/api/v1/tenderos/stores/${nextStoreId}/catalog`),
+          requestJson(`/api/v1/tenderos/stores/${nextStoreId}/products`),
+          requestJson(
+            `/api/v1/tenderos/stores/${nextStoreId}/product-categories`,
+          ),
+        ]);
+      const shared = ((storeResponse.data ?? []) as CatalogStoreProduct[]).map(
+        toProduct,
       );
-      setProducts(
-        ((storeResponse.data ?? []) as CatalogStoreProduct[]).map(toProduct),
-      );
+      const privateItems = (privateResponse.data ?? []) as Array<{
+        id: string;
+        name: string;
+        categoryName?: string | null;
+        categoryId?: string | null;
+        price: number | null;
+        stock: number;
+        active: boolean;
+        saleUnit: SaleUnit;
+        integerOnly: boolean;
+      }>;
+      setProducts([
+        ...shared,
+        ...privateItems.map((item) => ({
+          id: item.id,
+          name: item.name,
+          category: item.categoryName || "Sin categoría",
+          brand: "",
+          presentation: "",
+          price: item.price,
+          observedPrice: null,
+          stock: item.stock,
+          active: item.active,
+          saleUnit: item.saleUnit ?? "unidad",
+          integerOnly: item.integerOnly ?? false,
+          source: "private" as const,
+          pricePending: item.price === null || item.price <= 0,
+        })),
+      ]);
+      setCategoriesList((categoriesResponse.data ?? []) as Category[]);
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -120,7 +176,7 @@ export function ProductsWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [requestJson]);
+  }, [requestJson, storeId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -168,13 +224,26 @@ export function ProductsWorkspace({
       return setFeedback(
         "No hay una tienda disponible para agregar productos.",
       );
+    if (
+      !Number.isFinite(Number(priceInput)) ||
+      Number(priceInput) <= 0 ||
+      !/^\d+(?:\.\d{1,2})?$/.test(priceInput.trim())
+    ) {
+      setError("Enter a positive price with at most two decimal places.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
       await requestJson(`/api/v1/tenderos/stores/${storeId}/catalog`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productId }),
+        body: JSON.stringify({
+          productId,
+          price: Number(priceInput),
+          saleUnit,
+          integerOnly,
+        }),
       });
       setSelectedProductId("");
       setFeedback("Producto agregado con stock inicial de 1.");
@@ -190,14 +259,100 @@ export function ProductsWorkspace({
     }
   };
 
+  const createCategory = async () => {
+    if (!newCategory.trim() || !storeId) return;
+    setSaving(true);
+    try {
+      const result = await requestJson(
+        `/api/v1/tenderos/stores/${storeId}/product-categories`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newCategory.trim() }),
+        },
+      );
+      const value = result.data as Category;
+      setCategoriesList((current) => [...current, value]);
+      setPrivateCategory(value.id);
+      setNewCategory("");
+      setCreatingCategory(false);
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Could not create category.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createPrivateProduct = async () => {
+    const price = Number(priceInput);
+    if (
+      !privateName.trim() ||
+      !Number.isFinite(price) ||
+      price <= 0 ||
+      !/^\d+(?:\.\d{1,2})?$/.test(priceInput.trim())
+    ) {
+      setError(
+        "A name and positive price with at most two decimal places are required.",
+      );
+      return;
+    }
+    setSaving(true);
+    try {
+      await requestJson(`/api/v1/tenderos/stores/${storeId}/products`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: privateName.trim(),
+          price,
+          stock: 1,
+          saleUnit,
+          integerOnly,
+          ...(privateCategory ? { categoryId: privateCategory } : {}),
+        }),
+      });
+      setPrivateName("");
+      setPriceInput("");
+      await loadCatalog();
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Could not create product.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const updateProduct = async (
     id: string,
-    changes: { price?: number | null; stock?: number; active?: boolean },
+    changes: {
+      price?: number | null;
+      stock?: number;
+      active?: boolean;
+      saleUnit?: SaleUnit;
+      integerOnly?: boolean;
+    },
   ) => {
     setSaving(true);
     setError("");
     try {
-      await requestJson(`/api/v1/tenderos/store-catalog-products/${id}`, {
+      const product = products.find((item) => item.id === id);
+      const endpoint =
+        product?.source === "private"
+          ? `/api/v1/tenderos/products/${id}`
+          : `/api/v1/tenderos/store-catalog-products/${id}`;
+      if (
+        changes.active === true &&
+        (product?.price === null ||
+          product?.price === undefined ||
+          product.price <= 0) &&
+        !(changes.price && changes.price > 0)
+      ) {
+        setError("Enter a positive price before activating this product.");
+        return;
+      }
+      await requestJson(endpoint, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(changes),
@@ -219,8 +374,15 @@ export function ProductsWorkspace({
     setSaving(true);
     setError("");
     try {
-      await requestJson(`/api/v1/tenderos/store-catalog-products/${id}`, {
-        method: "DELETE",
+      const product = products.find((item) => item.id === id);
+      const endpoint =
+        product?.source === "private"
+          ? `/api/v1/tenderos/products/${id}`
+          : `/api/v1/tenderos/store-catalog-products/${id}`;
+      await requestJson(endpoint, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: false }),
       });
       setFeedback("Producto quitado del catálogo.");
       await loadCatalog();
@@ -240,7 +402,10 @@ export function ProductsWorkspace({
     const product = products.find((item) => item.id === selectedProductId);
     if (
       !product ||
-      !Number.isInteger(quantity) ||
+      !Number.isFinite(quantity) ||
+      (product.saleUnit === "unidad" || product.integerOnly
+        ? !Number.isInteger(quantity)
+        : !/^\d+(?:\.\d{1,3})?$/.test(saleQty.trim())) ||
       quantity <= 0 ||
       product.stock < quantity
     ) {
@@ -290,15 +455,55 @@ export function ProductsWorkspace({
         </View>
       </View>
 
+      {stores.length > 1 ? (
+        <View className="flex-row flex-wrap gap-2">
+          {stores.map((store) => (
+            <Pressable
+              key={store.id}
+              onPress={() => setStoreId(store.id)}
+              className={`rounded-xl border px-3 py-2 ${storeId === store.id ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"}`}
+            >
+              <Text>{store.name || "Store"}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
       {tool === "add" ? (
         <View className="w-full max-w-xl self-center rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <Text className="text-base font-semibold text-slate-900">
             Elegir del catálogo global
           </Text>
           <Text className="mt-1 text-sm text-slate-600">
-            Selecciona un producto existente. Se agregará con stock inicial de
-            1.
+            Select a shared catalog product and configure its price and sale
+            unit. Stock starts at 1.
           </Text>
+          <TextInput
+            value={priceInput}
+            onChangeText={setPriceInput}
+            placeholder="Price (USD)"
+            keyboardType="decimal-pad"
+            className="mt-3 rounded-lg border border-slate-200 px-3 py-2"
+          />
+          <View className="mt-2 flex-row flex-wrap gap-2">
+            {(["unidad", "kg", "g", "L", "ml"] as const).map((unit) => (
+              <Pressable
+                key={unit}
+                onPress={() => setSaleUnit(unit)}
+                className={`rounded-lg border px-3 py-2 ${saleUnit === unit ? "border-emerald-300 bg-emerald-50" : "border-slate-200"}`}
+              >
+                <Text>{unit}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Pressable
+            onPress={() => setIntegerOnly((value) => !value)}
+            className="mt-2"
+          >
+            <Text>
+              {integerOnly ? "✓ Integer only" : "Fractional quantities allowed"}
+            </Text>
+          </Pressable>
           <View className="mt-3 gap-2">
             {globalProducts.map((product) => (
               <Pressable
@@ -331,6 +536,48 @@ export function ProductsWorkspace({
               {saving ? "Agregando..." : "Agregar a mi tienda"}
             </Text>
           </Pressable>
+          <Pressable onPress={() => setCreatingCategory(true)} className="mt-2">
+            <Text>Create category</Text>
+          </Pressable>
+          {creatingCategory ? (
+            <View>
+              <TextInput
+                value={newCategory}
+                onChangeText={setNewCategory}
+                placeholder="Category name"
+                className="rounded-lg border px-3 py-2"
+              />
+              <Pressable onPress={() => void createCategory()}>
+                <Text>Save category</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          <View className="mt-4 border-t border-slate-200 pt-3">
+            <Text className="font-semibold">Add private product</Text>
+            <TextInput
+              value={privateName}
+              onChangeText={setPrivateName}
+              placeholder="Product name"
+              className="mt-2 rounded-lg border px-3 py-2"
+            />
+            <View className="mt-2 flex-row flex-wrap gap-2">
+              {categoriesList.map((category) => (
+                <Pressable
+                  key={category.id}
+                  onPress={() => setPrivateCategory(category.id)}
+                >
+                  <Text>{category.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Pressable
+              onPress={() => void createPrivateProduct()}
+              disabled={saving}
+              className="mt-3 rounded-lg bg-emerald-600 px-3 py-3"
+            >
+              <Text className="text-white">Save private product</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
@@ -453,6 +700,9 @@ export function ProductsWorkspace({
       {error ? (
         <View className="w-full max-w-xl self-center rounded-xl border border-rose-200 bg-rose-50 px-3 py-2">
           <Text className="text-sm text-rose-700">{error}</Text>
+          <Pressable onPress={() => void loadCatalog()}>
+            <Text className="mt-2 font-semibold text-rose-800">Retry</Text>
+          </Pressable>
         </View>
       ) : null}
       {feedback ? (

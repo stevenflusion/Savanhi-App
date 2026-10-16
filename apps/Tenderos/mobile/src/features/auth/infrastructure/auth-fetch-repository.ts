@@ -18,6 +18,10 @@ const API_BASE_URL = resolveTenderosApiBaseUrl({
   isDevelopment: __DEV__,
 });
 
+if (__DEV__) {
+  console.info(`[api] Backend base URL: ${API_BASE_URL}`);
+}
+
 const REFRESH_RESULT_REUSE_WINDOW_MS = 60_000;
 
 type RefreshRequestEntry = {
@@ -177,12 +181,15 @@ export function createAuthFetchRepository(): AuthRemoteRepository {
     },
 
     async requestOtp(email) {
+      const url = `${API_BASE_URL}/auth/otp/request`;
       try {
-        const response = await fetch(`${API_BASE_URL}/auth/otp/request`, {
+        if (__DEV__) console.info(`[api] POST ${url}`);
+        const response = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email }),
         });
+        if (__DEV__) console.info(`[api] POST ${url} → HTTP ${response.status}`);
 
         if (!response.ok) {
           const data = (await response
@@ -211,7 +218,8 @@ export function createAuthFetchRepository(): AuthRemoteRepository {
           challengeId: String(data.challengeId),
           cooldownSeconds: Number(data.cooldownSeconds) || 0,
         };
-      } catch {
+      } catch (error) {
+        if (__DEV__) console.error(`[api] POST ${url} failed`, error);
         return {
           success: false,
           state: "offline",

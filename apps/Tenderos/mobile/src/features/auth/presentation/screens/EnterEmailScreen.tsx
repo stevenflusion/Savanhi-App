@@ -147,14 +147,12 @@ export default function EnterEmailScreen() {
             disabled={!valid || loading}
             accessibilityState={{ disabled: !valid || loading, busy: loading }}
             accessibilityValue={otpState ? { text: otpState } : undefined}
-            className={`h-16 items-center justify-center rounded-full ${
-              valid ? "bg-black" : "bg-gray-100"
-            }`}
+            className={`h-16 items-center justify-center rounded-full ${valid ? "bg-black" : "bg-gray-100"
+              }`}
           >
             <Text
-              className={`text-lg ${
-                valid && !loading ? "text-white" : "text-gray-400"
-              }`}
+              className={`text-lg ${valid && !loading ? "text-white" : "text-gray-400"
+                }`}
             >
               Siguiente
             </Text>

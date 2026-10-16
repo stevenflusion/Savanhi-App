@@ -2,6 +2,9 @@ import type { AuthRole } from "@repo/api-contracts/auth";
 import {
   catalogStoreProductAddSchema,
   catalogStoreProductUpdateSchema,
+  storeProductCategoryCreateSchema,
+  storeProductCreateSchema,
+  storeProductUpdateSchema,
 } from "@repo/api-contracts/catalog";
 import { ORDER_STATUSES } from "@repo/api-contracts/orders";
 import {
@@ -26,14 +29,11 @@ const storeSchema = z.object({
   longitude: z.number().nullable().optional(),
   paymentMethod: z.enum(["efectivo", "pichincha"]).nullable().optional(),
 });
-const productSchema = z.object({
+const productSchema = storeProductCreateSchema.extend({
   storeId: z.string().uuid().nullable().optional(),
-  brandId: z.string().uuid().nullable().optional(),
-  name: z.string().min(1),
-  description: z.string().nullable().optional(),
-  price: z.number().nonnegative(),
-  stock: z.number().int().nonnegative().optional(),
-  active: z.boolean().optional(),
+});
+const productUpdateSchema = storeProductUpdateSchema.extend({
+  storeId: z.string().uuid().nullable().optional(),
 });
 const orderStatusSchema = z.object({
   status: z.enum(ORDER_STATUSES),
@@ -83,6 +83,53 @@ export function createApiRouter({
           req.body,
         );
         res.status(201).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.get(
+    "/api/v1/tenderos/stores/:storeId/product-categories",
+    requireRole(["tendero"]),
+    validateParams(storeIdParamsSchema),
+    async (req, res, next) => {
+      try {
+        const storeId = String(req.params.storeId);
+        if (
+          !(await stores.listIdsByOwner(req.auth?.user.id ?? "")).includes(
+            storeId,
+          )
+        )
+          throw new AppError("Store does not belong to this tendero.", 403);
+        res
+          .status(200)
+          .json({ data: await catalog.listCategoriesForStore(storeId) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.post(
+    "/api/v1/tenderos/stores/:storeId/product-categories",
+    requireRole(["tendero"]),
+    validateParams(storeIdParamsSchema),
+    validateBody(storeProductCategoryCreateSchema),
+    async (req, res, next) => {
+      try {
+        const storeId = String(req.params.storeId);
+        if (
+          !(await stores.listIdsByOwner(req.auth?.user.id ?? "")).includes(
+            storeId,
+          )
+        )
+          throw new AppError("Store does not belong to this tendero.", 403);
+        res
+          .status(201)
+          .json({
+            data: await catalog.createCategoryForStore(storeId, req.body),
+          });
       } catch (error) {
         next(error);
       }
@@ -179,6 +226,51 @@ export function createApiRouter({
   );
 
   router.get(
+    "/api/v1/tenderos/stores/:storeId/products",
+    requireRole(["tendero"]),
+    validateParams(storeIdParamsSchema),
+    async (req, res, next) => {
+      try {
+        const storeId = String(req.params.storeId);
+        if (
+          !(await stores.listIdsByOwner(req.auth?.user.id ?? "")).includes(
+            storeId,
+          )
+        )
+          throw new AppError("Store does not belong to this tendero.", 403);
+        res
+          .status(200)
+          .json({ data: await products.listByStoreIds([storeId]) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.post(
+    "/api/v1/tenderos/stores/:storeId/products",
+    requireRole(["tendero"]),
+    validateParams(storeIdParamsSchema),
+    validateBody(productSchema),
+    async (req, res, next) => {
+      try {
+        const storeId = String(req.params.storeId);
+        if (
+          !(await stores.listIdsByOwner(req.auth?.user.id ?? "")).includes(
+            storeId,
+          )
+        )
+          throw new AppError("Store does not belong to this tendero.", 403);
+        res
+          .status(201)
+          .json({ data: await products.createForStore(storeId, req.body) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.get(
     "/api/v1/tenderos/products",
     requireRole(["tendero"]),
     async (req, res, next) => {
@@ -215,10 +307,15 @@ export function createApiRouter({
     "/api/v1/tenderos/products/:id",
     requireRole(["tendero"]),
     validateParams(idParamsSchema),
-    validateBody(productSchema.partial()),
+    validateBody(productUpdateSchema),
     async (req, res, next) => {
       try {
         const storeIds = await stores.listIdsByOwner(req.auth?.user.id ?? "");
+        if (
+          req.body.storeId !== undefined &&
+          (!req.body.storeId || !storeIds.includes(req.body.storeId))
+        )
+          throw new AppError("Store does not belong to this tendero.", 403);
         const data = await products.updateForStores(
           String(req.params.id),
           storeIds,

@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "Neon": {
+      "type": "remote",
+      "url": "https://mcp.neon.tech/mcp?projectId=little-sky-09230383",
+      "enabled": true
+    }
+  }
+}
