@@ -21,7 +21,13 @@ import {
   createAuthFetchRepository,
 } from "../infrastructure/auth-fetch-repository";
 import { createSecureStoreAuthSessionRepository } from "../infrastructure/session-storage";
+import {
+  createStorePhotosUploadDeps,
+  fetchOwnStoreId,
+  type AuthenticatedJsonRequest,
+} from "../infrastructure/store-photos-fetch-repository";
 import { executeProtectedAuthRequest } from "../application/use-cases/execute-protected-auth-request";
+import { uploadStorePhotos } from "../application/use-cases/upload-store-photos.use-case";
 import type {
   AuthContextType,
   SaveLocationInput,
@@ -111,6 +117,69 @@ export function AuthProvider({ children }: AuthProviderProps) {
     })();
   }, []);
 
+  /**
+   * Runs one authenticated request against an explicit session instead of the
+   * component state, so a caller that just received a fresher session (such as
+   * `completeRegistration`) does not reuse a stale closure.
+   */
+  const runAuthenticatedRequest = async (
+    stored: StoredAuthSession,
+    path: string,
+    init: RequestInit = {},
+  ) => {
+    const outcome = await executeProtectedAuthRequest({
+      stored,
+      remoteRepository: authRemoteRepository,
+      sessionRepository: authSessionRepository,
+      request: async (accessToken) => {
+        try {
+          const response = await authorizedFetch(accessToken, path, init);
+          if (response.ok) return { success: true as const, data: response };
+          const data = await response.json().catch(() => ({}));
+          return {
+            success: false as const,
+            error: data.error ?? "No se pudo completar la solicitud.",
+            status: response.status,
+            unauthorized: response.status === 401,
+          };
+        } catch {
+          return {
+            success: false as const,
+            error: "No se pudo conectar con el servidor.",
+            unauthorized: false,
+          };
+        }
+      },
+    });
+
+    if (outcome.stored !== stored) syncStoredSession(outcome.stored ?? null);
+    if (!outcome.result.success) {
+      return { success: false as const, error: outcome.result.error };
+    }
+    return { success: true as const, response: outcome.result.data };
+  };
+
+  /**
+   * Uploads the given local photo URIs to the store's own Garage prefix and
+   * returns the ones that did not make it, so they can stay in the onboarding
+   * draft for a later attempt.
+   */
+  const uploadPendingPhotos = async (
+    stored: StoredAuthSession,
+    storeId: string,
+    uris: string[],
+  ): Promise<string[]> => {
+    if (!uris.length) return [];
+    const request: AuthenticatedJsonRequest = (path, init) =>
+      runAuthenticatedRequest(stored, path, init);
+    const result = await uploadStorePhotos({
+      storeId,
+      uris,
+      deps: createStorePhotosUploadDeps(request),
+    });
+    return result.failed;
+  };
+
   const saveProfile = async (data: SaveProfileInput) => {
     const stored = getStoredSession();
     if (!stored) return { success: false, error: "Sesión no encontrada." };
@@ -124,11 +193,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const stored = getStoredSession();
     if (!stored) return { success: false, error: "Sesión no encontrada." };
 
+    // The store exists only once registration completes, so during first-time
+    // onboarding there is nothing to upload into yet. The URIs then stay in the
+    // draft and `completeRegistration` uploads them the moment the store is
+    // created, which is what makes the photos survive a reinstall.
+    const storeId = uris.length
+      ? await fetchOwnStoreId((path, init) =>
+          runAuthenticatedRequest(stored, path, init),
+        )
+      : null;
+    const pendingPhotos = storeId
+      ? await uploadPendingPhotos(stored, storeId, uris)
+      : uris;
+
     const nextStored = {
       ...stored,
       onboardingDraft: {
         ...(stored.onboardingDraft ?? {}),
-        photos: uris,
+        photos: pendingPhotos,
       },
       onboardingStep: "account-created",
     } satisfies StoredAuthSession;
@@ -204,10 +286,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   const completeRegistration = async () => {
-    const result =
-      await authUseCases.completeAuthRegistration(getStoredSession());
+    const stored = getStoredSession();
+    const pendingPhotos = stored?.onboardingDraft?.photos ?? [];
+    const result = await authUseCases.completeAuthRegistration(stored);
 
     if ("stored" in result) syncStoredSession(result.stored ?? null);
+
+    // The store now exists, so the onboarding photos finally have a home. A
+    // failed upload never fails the registration: photos are optional and the
+    // tendero can add them again from the app.
+    const completedStored = result.stored;
+    const storeId = result.data?.storeId;
+    if (result.success && completedStored && storeId && pendingPhotos.length) {
+      await uploadPendingPhotos(completedStored, storeId, pendingPhotos);
+    }
+
     return { success: result.success, error: result.error };
   };
 
@@ -218,36 +311,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return { success: false as const, error: "Sesión no encontrada." };
       }
 
-      const outcome = await executeProtectedAuthRequest({
-        stored,
-        remoteRepository: authRemoteRepository,
-        sessionRepository: authSessionRepository,
-        request: async (accessToken) => {
-          try {
-            const response = await authorizedFetch(accessToken, path, init);
-            if (response.ok) return { success: true as const, data: response };
-            const data = await response.json().catch(() => ({}));
-            return {
-              success: false as const,
-              error: data.error ?? "No se pudo completar la solicitud.",
-              status: response.status,
-              unauthorized: response.status === 401,
-            };
-          } catch {
-            return {
-              success: false as const,
-              error: "No se pudo conectar con el servidor.",
-              unauthorized: false,
-            };
-          }
-        },
-      });
-
-      if (outcome.stored !== stored) syncStoredSession(outcome.stored ?? null);
-      if (!outcome.result.success) {
-        return { success: false as const, error: outcome.result.error };
-      }
-      return { success: true as const, response: outcome.result.data };
+      return runAuthenticatedRequest(stored, path, init);
     },
     [
       user,
