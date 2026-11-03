@@ -4,22 +4,28 @@ import type {
   CouponProductRef,
   CouponUpdateRequest,
 } from "@repo/api-contracts";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { createQrToken, hashQrToken } from "../../coupons/qr-token.js";
 import { AppError } from "../../errors.js";
+import { couponCalendarToday } from "../calendar.js";
 import type { DatabaseConnection } from "../connection.js";
 import {
   mapCoupon,
+  type ClaimableCouponRecord,
   type CouponProductDetailRecord,
   type CouponRecord,
+  type CustomerClaimRecord,
 } from "../mappers.js";
 import {
   catalogCategories,
   catalogProducts,
+  couponClaims,
   couponProducts,
   coupons,
   products,
   storeCatalogProducts,
   storeProductCategories,
+  stores,
 } from "../schema.js";
 
 /** A transaction handle, so one write path can span several statements. */
@@ -84,6 +90,15 @@ const CONSTRAINT_FAILURES: Record<
   coupon_products_single_source_chk: {
     message: "A coupon product names exactly one product source.",
     statusCode: 400,
+  },
+  /**
+   * Once per customer (S6). The claim path checks for an existing claim first
+   * to answer with this message without a failed statement; this entry is what
+   * keeps the answer right when two of the customer's own requests race.
+   */
+  coupon_claims_coupon_customer_uidx: {
+    message: "You have already claimed this coupon.",
+    statusCode: 409,
   },
 };
 
@@ -481,6 +496,250 @@ export function createCouponsRepository(db: DatabaseConnection) {
           }),
         ),
       ];
+    },
+
+    /**
+     * The claimable coupons of a set of stores, with whether THIS customer
+     * already claimed each one (S7).
+     *
+     * “Claimable” is the four conditions S7 names, all evaluated in the
+     * database: not paused, the coupon calendar day inside the validity window
+     * (inclusive at both ends, per S6), and stock left. The store filter is the
+     * caller's, because the feed's store set is the union of “within 3 km” and
+     * “followed”, which only the route knows.
+     */
+    async listClaimableForCustomer(
+      storeIds: string[],
+      customerUserId: string,
+    ): Promise<ClaimableCouponRecord[]> {
+      if (!storeIds.length) return [];
+      const today = couponCalendarToday();
+
+      const rows = await db
+        .select({
+          coupon: coupons,
+          claimed: sql<boolean>`${couponClaims.id} is not null`,
+        })
+        .from(coupons)
+        .leftJoin(
+          couponClaims,
+          and(
+            eq(couponClaims.couponId, coupons.id),
+            eq(couponClaims.customerUserId, customerUserId),
+          ),
+        )
+        .where(
+          and(
+            inArray(coupons.storeId, storeIds),
+            eq(coupons.paused, false),
+            sql`${coupons.validFrom} <= ${today} and ${today} <= ${coupons.validTo}`,
+            sql`${coupons.claimedCount} < ${coupons.totalStock}`,
+          ),
+        )
+        // Newest first within one store; the route's stable sort by distance
+        // then keeps this as the tie-break, and `created_at` is never rendered.
+        .orderBy(desc(coupons.createdAt));
+
+      return rows.map((row) => ({
+        ...mapCoupon(row.coupon),
+        claimed: row.claimed,
+      }));
+    },
+
+    /**
+     * Claims a coupon for a customer in ONE transaction (S6, S8).
+     *
+     * The reservation is a conditional increment — `set claimed_count =
+     * claimed_count + 1 where claimed_count < total_stock` — so the row lock
+     * serialises concurrent claims and the loser's WHERE is re-evaluated
+     * against the committed value and matches nothing. No read-then-write
+     * comparison is involved, which is why overselling is impossible rather
+     * than unlikely, and `coupons_claimed_within_stock_chk` stands behind it as
+     * the invariant no statement can bypass.
+     *
+     * The claim row goes in after the increment, so the UNIQUE on
+     * (coupon, customer) aborts the whole transaction and the reservation is
+     * rolled back with it: a rejected claim always leaves stock unchanged.
+     *
+     * Returns the plaintext token, which exists only here and in the response
+     * that carries it: the database keeps only its hash (S3).
+     */
+    async claimForCustomer(
+      couponId: string,
+      customerUserId: string,
+    ): Promise<{ claimId: string; qrToken: string }> {
+      return mappingConstraints(() =>
+        db.transaction(async (tx) => {
+          const today = couponCalendarToday();
+          const [row] = await tx
+            .select({
+              coupon: coupons,
+              withinValidity: sql<boolean>`${coupons.validFrom} <= ${today} and ${today} <= ${coupons.validTo}`,
+            })
+            .from(coupons)
+            .where(eq(coupons.id, couponId));
+          if (!row) throw new AppError("Coupon not found.", 404);
+
+          // Each rejection conflicts with STORED state rather than being a
+          // malformed request, so each one is a 409 with its own reason.
+          if (row.coupon.paused) {
+            throw new AppError(
+              "This coupon is paused and is not accepting new claims.",
+              409,
+            );
+          }
+          if (!row.withinValidity) {
+            throw new AppError("This coupon is not valid today.", 409);
+          }
+
+          const [existing] = await tx
+            .select({ id: couponClaims.id })
+            .from(couponClaims)
+            .where(
+              and(
+                eq(couponClaims.couponId, couponId),
+                eq(couponClaims.customerUserId, customerUserId),
+              ),
+            );
+          if (existing) {
+            throw new AppError("You have already claimed this coupon.", 409);
+          }
+
+          const reserved = await tx
+            .update(coupons)
+            .set({
+              claimedCount: sql`${coupons.claimedCount} + 1`,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(coupons.id, couponId),
+                sql`${coupons.claimedCount} < ${coupons.totalStock}`,
+              ),
+            )
+            .returning({ id: coupons.id });
+          if (!reserved.length) {
+            throw new AppError("This coupon is out of stock.", 409);
+          }
+
+          const qrToken = createQrToken();
+          const [claim] = await tx
+            .insert(couponClaims)
+            .values({
+              couponId,
+              customerUserId,
+              qrTokenHash: hashQrToken(qrToken),
+              // Explicit, not the column default: the default is
+              // `current_date`, which is the UTC day, and the claim was just
+              // validated against the coupon calendar day.
+              claimedOn: today,
+            })
+            .returning({ id: couponClaims.id });
+          if (!claim) throw new AppError("Unable to create the claim.", 502);
+
+          return { claimId: claim.id, qrToken };
+        }),
+      );
+    },
+
+    /**
+     * Issues a NEW token for a claim and forgets the old one.
+     *
+     * Only the hash is stored, so a customer who lost the plaintext cannot be
+     * given it back — re-issuing is the only recovery, and overwriting the hash
+     * is what invalidates whatever was shown before.
+     *
+     * A claim that belongs to someone else is a 403 and not a 404, the same
+     * reading the tendero coupon routes use: the id came from somewhere.
+     */
+    async rotateClaimQrTokenForCustomer(
+      claimId: string,
+      customerUserId: string,
+    ): Promise<{ claimId: string; qrToken: string }> {
+      const today = couponCalendarToday();
+      const [row] = await db
+        .select({
+          claim: couponClaims,
+          expired: sql<boolean>`${coupons.validTo} < ${today}`,
+        })
+        .from(couponClaims)
+        .innerJoin(coupons, eq(couponClaims.couponId, coupons.id))
+        .where(eq(couponClaims.id, claimId));
+      if (!row) throw new AppError("Claim not found.", 404);
+      if (row.claim.customerUserId !== customerUserId) {
+        throw new AppError("This claim belongs to another customer.", 403);
+      }
+      if (row.claim.status === "redeemed") {
+        throw new AppError("This claim has already been redeemed.", 409);
+      }
+      if (row.expired) {
+        throw new AppError("This coupon is no longer valid.", 409);
+      }
+
+      const qrToken = createQrToken();
+      // The status is part of the WHERE, so a redemption that commits between
+      // the read above and this write loses the race instead of reviving a
+      // redeemed claim with a fresh token.
+      const rotated = await db
+        .update(couponClaims)
+        .set({ qrTokenHash: hashQrToken(qrToken) })
+        .where(
+          and(eq(couponClaims.id, claimId), eq(couponClaims.status, "claimed")),
+        )
+        .returning({ id: couponClaims.id });
+      if (!rotated.length) {
+        throw new AppError("This claim has already been redeemed.", 409);
+      }
+
+      return { claimId, qrToken };
+    },
+
+    /**
+     * A customer's claims, each with its coupon and the store to redeem it at,
+     * for the wallet and for the single-claim responses.
+     *
+     * The customer id is a filter and not a check, so this can never read
+     * another customer's claim. `expired` comes from the same query as the rest
+     * (S6: the validity end date is the hard limit), so the derived status
+     * never disagrees with the window the claim path validated against.
+     */
+    async listClaimDetailsForCustomer(
+      customerUserId: string,
+      claimId?: string,
+    ): Promise<CustomerClaimRecord[]> {
+      const today = couponCalendarToday();
+      const rows = await db
+        .select({
+          claim: couponClaims,
+          coupon: coupons,
+          storeId: stores.id,
+          storeName: stores.name,
+          expired: sql<boolean>`${coupons.validTo} < ${today}`,
+        })
+        .from(couponClaims)
+        .innerJoin(coupons, eq(couponClaims.couponId, coupons.id))
+        .innerJoin(stores, eq(coupons.storeId, stores.id))
+        .where(
+          and(
+            eq(couponClaims.customerUserId, customerUserId),
+            ...(claimId === undefined
+              ? []
+              : [eq(couponClaims.id, claimId)]),
+          ),
+        )
+        // Most recent claim first. `created_at` is the internal instant and is
+        // never rendered; the displayed date is `claimed_on` (S11).
+        .orderBy(desc(couponClaims.createdAt));
+
+      return rows.map((row) => ({
+        id: row.claim.id,
+        status: row.claim.status,
+        claimedOn: row.claim.claimedOn,
+        redeemedOn: row.claim.redeemedOn,
+        expired: row.expired,
+        coupon: mapCoupon(row.coupon),
+        store: { id: row.storeId, name: row.storeName },
+      }));
     },
   };
 }

@@ -234,6 +234,124 @@ export const storeFollowSchema = z.strictObject({ storeId: z.uuid() });
 export type StoreFollowRequest = z.infer<typeof storeFollowSchema>;
 
 /**
+ * The fixed discovery radius (L6: “radio fijo de 3km”). It lives in the
+ * contract because the customer app shows the same radius on its map that the
+ * feed filters by; two copies of 3 km would drift.
+ */
+export const COUPON_FEED_RADIUS_METERS = 3_000;
+
+/**
+ * The customer's own position, as it arrives in a query string — hence the
+ * coercion, and hence the explicit finite check: `Number("")` is `0`, so a
+ * blank `lat=` would otherwise read as the equator.
+ */
+export const customerCoordinatesSchema = z.strictObject({
+  lat: z.coerce
+    .number()
+    .refine(Number.isFinite, "Latitude must be a number.")
+    .min(-90)
+    .max(90),
+  lng: z.coerce
+    .number()
+    .refine(Number.isFinite, "Longitude must be a number.")
+    .min(-180)
+    .max(180),
+});
+export type CustomerCoordinates = z.infer<typeof customerCoordinatesSchema>;
+
+/**
+ * A store as a customer sees it (S11): no `createdAt`, so no screen can render
+ * a time. This is deliberately NOT the tendero-facing `Store`, which carries
+ * the owner id, the bank account fields and a creation timestamp — none of
+ * which belong in a customer response.
+ *
+ * `latitude`/`longitude` are nullable because the column is: a tendero can
+ * finish onboarding without pinning the store on the map.
+ */
+export type CustomerStore = {
+  id: string;
+  name: string;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+/**
+ * A store inside the radius. Its coordinates are non-null by construction — a
+ * store with no coordinates has no distance and can never be “within 3 km”.
+ *
+ * The distance travels twice because S11 forbids rendering an id but says
+ * nothing about units: a card shows `distanceKm` when it is at least one
+ * kilometre and `distanceMeters` when it is closer, and neither client has to
+ * re-derive one from the other.
+ */
+export type NearbyStore = CustomerStore & {
+  latitude: number;
+  longitude: number;
+  distanceMeters: number;
+  distanceKm: number;
+};
+
+/**
+ * The store of a feed item. The distance is nullable here and not on
+ * `NearbyStore`, because a followed store always appears in the feed (L7)
+ * including when it has no coordinates to measure from.
+ */
+export type CustomerFeedStore = CustomerStore & {
+  distanceMeters: number | null;
+  distanceKm: number | null;
+};
+
+/**
+ * One entry of the SINGLE feed (S7). `followed` drives the “Siguiendo” badge
+ * and `claimed` tells the card whether this customer already holds a claim, so
+ * one screen renders nearby and followed coupons without a second request.
+ */
+export type CustomerCouponFeedItem = {
+  coupon: Coupon;
+  store: CustomerFeedStore;
+  followed: boolean;
+  claimed: boolean;
+};
+
+/**
+ * What a customer's claim looks like in the wallet.
+ *
+ * `expired` is DERIVED on read and never stored: S6 makes the validity end
+ * date the hard limit, so an unredeemed claim past `validTo` is expired no
+ * matter what the row says. The stored status stays `claimed`, which is what
+ * keeps the rule in one place instead of in a nightly job.
+ */
+export const CUSTOMER_CLAIM_STATUSES = [
+  "claimed",
+  "redeemed",
+  "expired",
+] as const;
+export type CustomerClaimStatus = (typeof CUSTOMER_CLAIM_STATUSES)[number];
+
+/** The store a claim is redeemable at; the customer reads the name, not the id. */
+export type CustomerClaimStore = {
+  id: string;
+  name: string;
+};
+
+/**
+ * A claim as its owner sees it: the coupon it applies to, where to redeem it,
+ * and the derived status. `qrToken` is the plaintext token and is non-null
+ * EXACTLY in the two responses that issue one — the claim itself and a
+ * re-issue — because only its hash is stored (S3).
+ */
+export type CustomerClaim = {
+  id: string;
+  status: CustomerClaimStatus;
+  qrToken: string | null;
+  claimedOn: string;
+  redeemedOn: string | null;
+  coupon: Coupon;
+  store: CustomerClaimStore;
+};
+
+/**
  * The category a coupon's product belongs to, carried so the app can pick a
  * per-category icon instead of a per-product image (S10): the MVP has no
  * product images at all.
@@ -334,4 +452,24 @@ export type CouponClaimResponse = {
 
 export type StoreFollowResponse = {
   data: StoreFollow;
+};
+
+export type NearbyStoresResponse = {
+  data: NearbyStore[];
+};
+
+export type CustomerStoresResponse = {
+  data: CustomerStore[];
+};
+
+export type CustomerCouponFeedResponse = {
+  data: CustomerCouponFeedItem[];
+};
+
+export type CustomerClaimsResponse = {
+  data: CustomerClaim[];
+};
+
+export type CustomerClaimResponse = {
+  data: CustomerClaim;
 };

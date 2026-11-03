@@ -148,6 +148,56 @@ export type StoreFollowRecord = {
   storeId: string;
 };
 
+/**
+ * A store as the customer-facing reads return it, with the distance from the
+ * customer's position in METRES — the raw measure, which the route turns into
+ * the kilometre value a card renders, exactly as it derives an image URL from
+ * an object key.
+ *
+ * This is deliberately not `Store`: `mapStore` carries the owner id, the bank
+ * account fields and a creation timestamp, and S11 forbids putting a timestamp
+ * in front of a customer.
+ *
+ * `distanceMeters` is null when the store has no coordinates. A followed store
+ * appears in the feed either way (L7), so the absence has to be representable.
+ */
+export type StoreDistanceRecord = {
+  id: string;
+  name: string;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  distanceMeters: number | null;
+};
+
+/**
+ * A coupon the customer can claim right now, with whether THIS customer
+ * already holds a claim on it. The flag belongs to the read and not to the
+ * coupon, which is why it is a separate record type rather than a nullable
+ * field on `CouponRecord`.
+ */
+export type ClaimableCouponRecord = CouponRecord & {
+  claimed: boolean;
+};
+
+/**
+ * A claim with everything the customer's wallet renders: the coupon it applies
+ * to and the store to redeem it at.
+ *
+ * `status` is the STORED status. `expired` is computed against the coupon
+ * calendar day (see `calendar.ts`) in the same query, so the route derives the
+ * displayed status without a second clock.
+ */
+export type CustomerClaimRecord = {
+  id: string;
+  status: CouponClaimStatus;
+  claimedOn: string;
+  redeemedOn: string | null;
+  expired: boolean;
+  coupon: CouponRecord;
+  store: { id: string; name: string };
+};
+
 export function mapCoupon(row: typeof coupons.$inferSelect): CouponRecord {
   return {
     id: row.id,

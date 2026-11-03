@@ -7,12 +7,19 @@ import {
   storeProductUpdateSchema,
 } from "@repo/api-contracts/catalog";
 import {
+  COUPON_FEED_RADIUS_METERS,
   couponCreateSchema,
   couponImageSetSchema,
   couponUpdateSchema,
+  customerCoordinatesSchema,
   imageUploadTicketRequestSchema,
   storePhotoRegisterSchema,
   type Coupon,
+  type CustomerClaim,
+  type CustomerCouponFeedItem,
+  type CustomerFeedStore,
+  type CustomerStore,
+  type NearbyStore,
   type StorePhoto,
 } from "@repo/api-contracts";
 import {
@@ -21,13 +28,17 @@ import {
   type BackendContext,
   type CouponProductDetailRecord,
   type CouponRecord,
+  type CustomerClaimRecord,
+  type GeoPoint,
   type ObjectStorage,
+  type StoreDistanceRecord,
   type StorePhotoRecord,
   validateBody,
   validateParams,
 } from "@repo/backend-core";
 import {
   Router,
+  type Request,
   type RequestHandler,
   type Router as ExpressRouter,
 } from "express";
@@ -36,6 +47,7 @@ import { z } from "zod";
 const idParamsSchema = z.object({ id: z.string().uuid() });
 const storeIdParamsSchema = z.object({ storeId: z.string().uuid() });
 const couponIdParamsSchema = z.object({ couponId: z.string().uuid() });
+const claimIdParamsSchema = z.object({ claimId: z.string().uuid() });
 const storeSchema = z.object({
   name: z.string().min(1),
   address: z.string().nullable().optional(),
@@ -716,6 +728,331 @@ export function createApiRouter({
           req.body.objectKey,
         );
         res.status(200).json({ data: await toCoupon(record) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * Customer routes (S2). The customer gets its own app, built later, so there
+   * is no screen behind any of these yet — the capability ships as HTTP now,
+   * guarded by `requireRole(["client"])`, and the tendero app can never reach
+   * it just as a customer can never reach a tendero route.
+   *
+   * The path segment mirrors `/api/v1/tenderos`: the actor's own name in the
+   * product's language, one namespace per app.
+   */
+  const customerId = (req: { auth?: { user: { id: string } } }) =>
+    req.auth?.user.id ?? "";
+
+  /**
+   * The customer's position, validated out of the query string.
+   *
+   * Parsed here rather than through `validateQuery`, which assigns
+   * `req.query`: Express 5 defines that property with a getter only, so the
+   * assignment throws. A `ZodError` from here reaches the shared error handler
+   * and becomes the same 400 a body rejection does.
+   */
+  const customerPoint = (req: Request): GeoPoint => {
+    const { lat, lng } = customerCoordinatesSchema.parse(req.query);
+    return { latitude: lat, longitude: lng };
+  };
+
+  /**
+   * Metres are the measure the database returns; a card renders kilometres.
+   * Both travel, so neither client re-derives the other (S11 bans ids and
+   * times in what a screen shows, not units).
+   */
+  const toFeedStore = (record: StoreDistanceRecord): CustomerFeedStore => ({
+    id: record.id,
+    name: record.name,
+    address: record.address,
+    latitude: record.latitude,
+    longitude: record.longitude,
+    distanceMeters:
+      record.distanceMeters === null ? null : Math.round(record.distanceMeters),
+    distanceKm:
+      record.distanceMeters === null
+        ? null
+        : Math.round(record.distanceMeters / 10) / 100,
+  });
+
+  /** Inside the radius, so both the coordinates and the distance are known. */
+  const toNearbyStore = (record: StoreDistanceRecord): NearbyStore => {
+    const store = toFeedStore(record);
+    if (
+      store.latitude === null ||
+      store.longitude === null ||
+      store.distanceMeters === null ||
+      store.distanceKm === null
+    ) {
+      throw new AppError("Unable to measure the distance to a store.", 502);
+    }
+    return {
+      ...store,
+      latitude: store.latitude,
+      longitude: store.longitude,
+      distanceMeters: store.distanceMeters,
+      distanceKm: store.distanceKm,
+    };
+  };
+
+  const toCustomerStore = (record: StoreDistanceRecord): CustomerStore => ({
+    id: record.id,
+    name: record.name,
+    address: record.address,
+    latitude: record.latitude,
+    longitude: record.longitude,
+  });
+
+  /**
+   * Assembles claims with their coupons in one pass through the coupon
+   * assembler above, so a wallet of N claims costs the same queries as one.
+   *
+   * `expired` is DERIVED here and never stored: after the validity end date an
+   * unredeemed claim is expired (S6), and the repository computed that against
+   * the coupon calendar day in the same query that read the claim.
+   *
+   * `qrToken` is non-null only on the two paths that issue one. Everywhere
+   * else it is null, because only the hash was kept (S3).
+   */
+  const toCustomerClaims = async (
+    records: CustomerClaimRecord[],
+    qrToken: string | null = null,
+  ): Promise<CustomerClaim[]> => {
+    const assembled = await toCoupons(records.map((record) => record.coupon));
+    return records.map((record, index) => {
+      const coupon = assembled[index];
+      if (!coupon) throw new AppError("Unable to read the claim.", 502);
+      return {
+        id: record.id,
+        status:
+          record.status === "claimed" && record.expired
+            ? "expired"
+            : record.status,
+        qrToken,
+        claimedOn: record.claimedOn,
+        redeemedOn: record.redeemedOn,
+        coupon,
+        store: record.store,
+      };
+    });
+  };
+
+  const toCustomerClaim = async (
+    records: CustomerClaimRecord[],
+    qrToken: string | null = null,
+  ): Promise<CustomerClaim> => {
+    const [claim] = await toCustomerClaims(records, qrToken);
+    if (!claim) throw new AppError("Unable to read the claim.", 502);
+    return claim;
+  };
+
+  router.get(
+    "/api/v1/clientes/stores/nearby",
+    requireRole(["client"]),
+    async (req, res, next) => {
+      try {
+        const records = await stores.listNearbyActive(
+          customerPoint(req),
+          COUPON_FEED_RADIUS_METERS,
+        );
+        res.status(200).json({ data: records.map(toNearbyStore) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.get(
+    "/api/v1/clientes/stores/followed",
+    requireRole(["client"]),
+    async (req, res, next) => {
+      try {
+        const records = await stores.listFollowedByCustomer(customerId(req));
+        res.status(200).json({ data: records.map(toCustomerStore) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * Follow and unfollow are idempotent, so they are a PUT and a DELETE on the
+   * same sub-resource and both answer with the end state rather than with what
+   * changed (S7).
+   */
+  router.put(
+    "/api/v1/clientes/stores/:storeId/follow",
+    requireRole(["client"]),
+    validateParams(storeIdParamsSchema),
+    async (req, res, next) => {
+      try {
+        const data = await stores.followForCustomer(
+          customerId(req),
+          String(req.params.storeId),
+        );
+        res.status(200).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.delete(
+    "/api/v1/clientes/stores/:storeId/follow",
+    requireRole(["client"]),
+    validateParams(storeIdParamsSchema),
+    async (req, res, next) => {
+      try {
+        const data = await stores.unfollowForCustomer(
+          customerId(req),
+          String(req.params.storeId),
+        );
+        res.status(200).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * The SINGLE feed (S7). One response holds the claimable coupons of every
+   * store within 3 km PLUS every followed store's, however far away, each
+   * carrying the `followed` flag the “Siguiendo” badge needs and whether this
+   * customer already claimed it. There is deliberately no second, followed-only
+   * feed endpoint.
+   *
+   * A store reached both ways appears once: the store set is a map keyed by id,
+   * and the nearby record wins because it is the one that carries a measured
+   * distance.
+   *
+   * Ordering is by distance ascending, with the stores that were never pinned
+   * on the map last. The sort is stable, so coupons of equally distant stores
+   * keep the repository's newest-first order.
+   */
+  router.get(
+    "/api/v1/clientes/coupons/feed",
+    requireRole(["client"]),
+    async (req, res, next) => {
+      try {
+        const customer = customerId(req);
+        const point = customerPoint(req);
+        const [nearby, followed] = await Promise.all([
+          stores.listNearbyActive(point, COUPON_FEED_RADIUS_METERS),
+          stores.listFollowedByCustomer(customer, point),
+        ]);
+
+        const followedIds = new Set(followed.map((store) => store.id));
+        const storesById = new Map<string, StoreDistanceRecord>();
+        for (const record of [...nearby, ...followed]) {
+          if (!storesById.has(record.id)) storesById.set(record.id, record);
+        }
+
+        const records = await coupons.listClaimableForCustomer(
+          [...storesById.keys()],
+          customer,
+        );
+        const assembled = await toCoupons(records);
+        const data: CustomerCouponFeedItem[] = records.map(
+          (record, index) => {
+            const coupon = assembled[index];
+            const store = storesById.get(record.storeId);
+            if (!coupon || !store) {
+              throw new AppError("Unable to read the coupon feed.", 502);
+            }
+            return {
+              coupon,
+              store: toFeedStore(store),
+              followed: followedIds.has(record.storeId),
+              claimed: record.claimed,
+            };
+          },
+        );
+
+        // `MAX_VALUE` rather than `Infinity`: subtracting two infinities is
+        // `NaN`, which would make the comparator inconsistent.
+        const rank = (item: CustomerCouponFeedItem) =>
+          item.store.distanceMeters ?? Number.MAX_VALUE;
+        data.sort((left, right) => rank(left) - rank(right));
+
+        res.status(200).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * Claiming reserves stock; redemption happens later in the store (S8), so
+   * this creates a claim and answers 201 with the plaintext QR token. That
+   * token is in this response and nowhere else — the database holds only its
+   * hash (S3) — and a customer who loses it re-issues it below.
+   */
+  router.post(
+    "/api/v1/clientes/coupons/:couponId/claims",
+    requireRole(["client"]),
+    validateParams(couponIdParamsSchema),
+    async (req, res, next) => {
+      try {
+        const customer = customerId(req);
+        const { claimId, qrToken } = await coupons.claimForCustomer(
+          String(req.params.couponId),
+          customer,
+        );
+        const records = await coupons.listClaimDetailsForCustomer(
+          customer,
+          claimId,
+        );
+        res
+          .status(201)
+          .json({ data: await toCustomerClaim(records, qrToken) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.get(
+    "/api/v1/clientes/claims",
+    requireRole(["client"]),
+    async (req, res, next) => {
+      try {
+        const records = await coupons.listClaimDetailsForCustomer(
+          customerId(req),
+        );
+        res.status(200).json({ data: await toCustomerClaims(records) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * Re-issues the QR of one of the customer's own claims. It exists because
+   * only the hash is stored: the plaintext cannot be read back, so recovery is
+   * a new token, and writing it over the hash is what kills the old one.
+   */
+  router.post(
+    "/api/v1/clientes/claims/:claimId/qr",
+    requireRole(["client"]),
+    validateParams(claimIdParamsSchema),
+    async (req, res, next) => {
+      try {
+        const customer = customerId(req);
+        const { claimId, qrToken } =
+          await coupons.rotateClaimQrTokenForCustomer(
+            String(req.params.claimId),
+            customer,
+          );
+        const records = await coupons.listClaimDetailsForCustomer(
+          customer,
+          claimId,
+        );
+        res
+          .status(200)
+          .json({ data: await toCustomerClaim(records, qrToken) });
       } catch (error) {
         next(error);
       }
