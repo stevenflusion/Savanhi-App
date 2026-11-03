@@ -1,36 +1,19 @@
 import type {
-  ImageContentType,
   ImageUploadTicket,
   ImageUploadTicketRequest,
-  MaxImageBytes,
   StorePhotoRegisterRequest,
 } from "@repo/api-contracts";
 
+import { isUploadableImage, type LocalImage } from "@/src/lib/image-upload";
+
 /**
- * `@repo/api-contracts` is ESM-only and Jest/Metro resolve CommonJS, so the
- * limit and the allowlist are restated here as values. The `MaxImageBytes` and
- * `ImageContentType` annotations make any drift from the backend contract a
- * type error.
+ * The content-type resolution, the size guard and the allowlist moved to
+ * `src/lib/image-upload` when the coupon photo (T8) started uploading through
+ * the same presigned-PUT path. They are re-exported here so this use case keeps
+ * the surface its callers and its suite already use.
  */
-const MAX_IMAGE_BYTES: MaxImageBytes = 5_242_880;
-
-const CONTENT_TYPE_BY_EXTENSION: Record<string, ImageContentType> = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  webp: "image/webp",
-};
-
-const ALLOWED_CONTENT_TYPES: ImageContentType[] = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-];
-
-export type LocalImage = {
-  bytes: Uint8Array;
-  contentType: ImageContentType;
-};
+export { resolveImageContentType } from "@/src/lib/image-upload";
+export type { LocalImage } from "@/src/lib/image-upload";
 
 export type UploadStorePhotosDeps = {
   /** Reads the picker's local URI. Returns null when it is gone or unusable. */
@@ -56,25 +39,6 @@ export type UploadStorePhotosResult = {
 };
 
 /**
- * Resolves the content type of a local image. The reported type wins when it is
- * in the allowlist, otherwise the file extension decides. Anything else is
- * refused here rather than at the presign endpoint.
- */
-export function resolveImageContentType(
-  uri: string,
-  reportedContentType?: string | null,
-): ImageContentType | null {
-  const reported = reportedContentType?.split(";")[0]?.trim().toLowerCase();
-  const allowed = ALLOWED_CONTENT_TYPES.find((type) => type === reported);
-  if (allowed) return allowed;
-
-  const path = uri.split("?")[0]?.split("#")[0] ?? "";
-  const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1) return null;
-  return CONTENT_TYPE_BY_EXTENSION[path.slice(lastDot + 1).toLowerCase()] ?? null;
-}
-
-/**
  * Uploads onboarding store photos through presigned PUT URLs and registers the
  * resulting object references, one at a time and in the given order so the
  * backend's stored position matches what the tendero arranged on screen.
@@ -97,12 +61,7 @@ export async function uploadStorePhotos({
   for (const uri of uris) {
     try {
       const image = await deps.readLocalImage(uri);
-      if (
-        !image ||
-        image.bytes.length === 0 ||
-        image.bytes.length > MAX_IMAGE_BYTES ||
-        !ALLOWED_CONTENT_TYPES.includes(image.contentType)
-      ) {
+      if (!isUploadableImage(image)) {
         failed.push(uri);
         continue;
       }

@@ -6,11 +6,9 @@ import type {
 } from "@repo/api-contracts";
 import type { Store } from "@repo/api-contracts/products";
 
-import {
-  resolveImageContentType,
-  type LocalImage,
-  type UploadStorePhotosDeps,
-} from "../application/use-cases/upload-store-photos.use-case";
+import { putImageBytes, readLocalImage } from "@/src/lib/image-upload";
+
+import type { UploadStorePhotosDeps } from "../application/use-cases/upload-store-photos.use-case";
 
 /**
  * The authenticated JSON caller the AuthProvider already owns. It refreshes
@@ -34,24 +32,6 @@ export async function fetchOwnStoreId(
   try {
     const body = (await outcome.response.json()) as { data?: StoreWithPhotos[] };
     return body.data?.[0]?.id ?? null;
-  } catch {
-    return null;
-  }
-}
-
-async function readLocalImage(uri: string): Promise<LocalImage | null> {
-  try {
-    const response = await fetch(uri);
-    if (!response.ok) return null;
-    const contentType = resolveImageContentType(
-      uri,
-      response.headers.get("content-type"),
-    );
-    if (!contentType) return null;
-    return {
-      bytes: new Uint8Array(await response.arrayBuffer()),
-      contentType,
-    };
   } catch {
     return null;
   }
@@ -84,27 +64,7 @@ export function createStorePhotosUploadDeps(
       }
     },
 
-    /**
-     * The bytes go straight to Garage, never through the API: the backend's
-     * JSON body parser caps requests at 100kb. The signature covers the exact
-     * content type and byte count the ticket was issued for, so both headers
-     * must be sent verbatim.
-     */
-    async uploadBytes(ticket, bytes) {
-      try {
-        const response = await fetch(ticket.uploadUrl, {
-          method: "PUT",
-          headers: {
-            "Content-Type": ticket.contentType,
-            "Content-Length": String(ticket.contentLength),
-          },
-          body: bytes as unknown as BodyInit,
-        });
-        return response.ok;
-      } catch {
-        return false;
-      }
-    },
+    uploadBytes: putImageBytes,
 
     async registerPhoto(storeId: string, payload: StorePhotoRegisterRequest) {
       const outcome = await request(
