@@ -15,5 +15,26 @@ services:
       timeout: 5s
       retries: 10
 
+  # S3-compatible object storage for store and coupon images.
+  # The mounted configuration is a development fixture; see infra/garage/garage.toml.
+  # A fresh volume reports unhealthy until `scripts/garage-bootstrap.sh` assigns
+  # the cluster layout, because `garage health` is a readiness check, not a
+  # liveness check. The layout then persists in the volume across restarts.
+  garage:
+    image: dxflrs/garage:v2.5.0
+    volumes:
+      - ./infra/garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    ports:
+      - "3900:3900"
+    healthcheck:
+      test: ["CMD", "/garage", "health", "-q"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres-data:
+  garage-meta:
+  garage-data:

@@ -1,0 +1,27 @@
+# Garage configuration for LOCAL DEVELOPMENT ONLY.
+#
+# Every secret in this file is a committed development fixture. It is shared by
+# every developer so that `scripts/garage-bootstrap.sh` and `.env.example` agree
+# on the same credentials without any manual copying.
+#
+# DEV-ONLY SECRET — never reuse any value below outside the Compose stack.
+# Production must receive its own generated rpc_secret and its own S3 key, and
+# must never mount this file.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+# Single-node development cluster: one copy of every block, no quorum.
+replication_factor = 1
+consistency_mode = "consistent"
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+# DEV-ONLY SECRET
+rpc_secret = "5e8be7d00a2b1f0b4ddbd8c1e9b2a7f3c6d0e4a9b8c7d6e5f4a3b2c1d0e9f8a7"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
