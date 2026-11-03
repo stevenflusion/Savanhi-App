@@ -219,9 +219,35 @@ export const couponUpdateSchema = z
   .refine(hasOrderedValidity, VALIDITY_ORDER_MESSAGE);
 export type CouponUpdateRequest = z.infer<typeof couponUpdateSchema>;
 
+/**
+ * Setting a coupon's image reference. The key is the one an upload ticket for
+ * the `coupons` scope issued; the backend re-checks that it lives under the
+ * owning store's own prefix before storing it.
+ */
+export const couponImageSetSchema = z.strictObject({
+  objectKey: couponImageObjectKeySchema,
+});
+export type CouponImageSetRequest = z.infer<typeof couponImageSetSchema>;
+
 /** Follow and unfollow both identify the store and nothing else (S7). */
 export const storeFollowSchema = z.strictObject({ storeId: z.uuid() });
 export type StoreFollowRequest = z.infer<typeof storeFollowSchema>;
+
+/**
+ * A coupon's product reference as the clients see it: the reference itself plus
+ * the data a list row needs, so the UI never has to fetch the catalog to render
+ * a coupon. `name` is the store-private product's name or the catalog product's
+ * commercial name, depending on the source.
+ *
+ * `imageUrl` is forward-compatible and always `null` today: neither
+ * `catalog_products` nor `products` carries an image column, so there is no
+ * product image to serve yet. The coupon's own `imageUrl` is what the UI
+ * renders in the meantime.
+ */
+export type CouponProductDetail = CouponProductRef & {
+  name: string;
+  imageUrl: string | null;
+};
 
 /**
  * A coupon as the clients see it. `validFrom`/`validTo` are date-only and there
@@ -249,7 +275,7 @@ export type Coupon = {
   remainingStock: number;
   paused: boolean;
   imageUrl: string | null;
-  products: CouponProductRef[];
+  products: CouponProductDetail[];
 };
 
 /**

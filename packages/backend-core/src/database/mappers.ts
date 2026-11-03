@@ -115,6 +115,16 @@ export type CouponRecord = {
 export type CouponProductRefRecord = CouponProductRef & { couponId: string };
 
 /**
+ * A product reference joined to the name its source holds: `products.name` for
+ * a store-private product, `catalog_products.commercial_name` for a global
+ * catalog assignment. The route layer turns this into `CouponProductDetail`,
+ * exactly as it does for `StorePhotoRecord`.
+ */
+export type CouponProductDetailRecord = CouponProductRefRecord & {
+  name: string;
+};
+
+/**
  * Application-side claim. The stored `qr_token_hash` is deliberately absent:
  * it is a lookup key for the redeem path, never application data, and the
  * plaintext token the customer renders exists only in the response that issues
