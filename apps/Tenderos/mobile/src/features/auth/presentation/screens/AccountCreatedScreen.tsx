@@ -40,9 +40,7 @@ export default function AccountCreatedScreen() {
     const result = await completeRegistration();
     setLoading(false);
 
-    if (result.success) {
-      router.replace("/(tabs)");
-    } else {
+    if (!result.success) {
       setError(result.error ?? "No se pudo completar el registro.");
     }
   };

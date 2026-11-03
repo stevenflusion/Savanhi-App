@@ -300,6 +300,25 @@ describe("auth navigation", () => {
     ).toBeNull();
   });
 
+  it("allows valid onboarding transitions without racing the layout redirect", () => {
+    expect(
+      getAuthLayoutRedirect(
+        "/auth/store-name",
+        user("profile_required"),
+        null,
+        "store-name",
+      ),
+    ).toBeNull();
+    expect(
+      getAuthLayoutRedirect(
+        "/auth/location-permissions",
+        user("store_required"),
+        { storeName: "Store" },
+        "location-permissions",
+      ),
+    ).toBeNull();
+  });
+
   it("redirects completed users away from auth routes and allows tabs", () => {
     const completed = user("completed");
 

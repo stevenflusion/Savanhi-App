@@ -93,11 +93,27 @@ export function getAuthLayoutRedirect(
   }
 
   const canonicalPath = getCanonicalAuthPath(user, draft, step);
-  const isBusinessLocationSubstep =
-    canonicalPath === "/auth/business-location" &&
-    pathname === "/auth/search-location";
+  const pathStep = pathname.startsWith("/auth/")
+    ? pathname.slice("/auth/".length)
+    : "";
+  const isValidOnboardingStep =
+    user.registrationStatus !== "completed" &&
+    AUTH_ONBOARDING_STEPS.includes(pathStep as AuthOnboardingStep) &&
+    (pathStep === "person-name" ||
+      pathStep === "store-name" ||
+      ((pathStep === "location-permissions" ||
+        pathStep === "business-location") &&
+        hasStoreName(draft)) ||
+      ((pathStep === "store-photos" || pathStep === "account-created") &&
+        hasLocation(draft) &&
+        (pathStep !== "account-created" || draft?.photos !== undefined)));
+  const isSearchLocationSubstep =
+    pathname === "/auth/search-location" &&
+    canonicalPath === "/auth/business-location";
 
-  return pathname === canonicalPath || isBusinessLocationSubstep
+  return pathname === canonicalPath ||
+    isValidOnboardingStep ||
+    isSearchLocationSubstep
     ? null
     : canonicalPath;
 }

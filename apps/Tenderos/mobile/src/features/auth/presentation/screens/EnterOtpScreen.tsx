@@ -12,10 +12,10 @@ import {
   KeyboardAvoidingView,
   Modal,
   Pressable,
-  SafeAreaView,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import OtpInput from "../components/OtpInput";
 import authLogo from "../assets/auth-logo";
 import type { OtpAuthState } from "@repo/api-contracts";
@@ -122,15 +122,7 @@ export default function EnterOtpScreen() {
     try {
       const result = await verifyOTP(email ?? "", challengeId, code);
 
-      if (result.success) {
-        if (result.user?.registrationStatus === "completed") {
-          router.replace("/(tabs)");
-        } else if (result.user?.registrationStatus === "store_required") {
-          router.replace("/auth/store-name" as any);
-        } else {
-          router.replace("/auth/person-name" as any);
-        }
-      } else {
+      if (!result.success) {
         const state = result.state ?? "provider_error";
         setOtpState(state);
         setError(getOtpFailureMessage(state as OtpFailureState, result.error));
