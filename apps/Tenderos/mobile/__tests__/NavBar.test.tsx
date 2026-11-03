@@ -1,7 +1,11 @@
 import React from "react";
 import { fireEvent, render } from "@testing-library/react-native";
 
-import { FloatingTabBar } from "@/src/components/NavBar";
+import {
+  FloatingTabBar,
+  NAV_BAR_HEIGHT,
+  SCAN_BUTTON_SIZE,
+} from "@/src/components/NavBar";
 
 const mockPush = jest.fn();
 jest.mock("expo-router", () => ({
@@ -137,6 +141,26 @@ describe("FloatingTabBar", () => {
     expect(screen.queryByLabelText("Agregar producto")).toBeNull();
     expect(screen.getAllByRole("tab")).toHaveLength(4);
     expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  /**
+   * T8 built the bar from a written description because the reference images
+   * were unreadable from its sandbox, and lifted the scan button 10px out of
+   * the pill. The real reference (L12's navbar image, read in T9) keeps the
+   * button INSIDE the bar: vertically centred, a little smaller than the bar
+   * is tall, with nothing protruding above it.
+   */
+  it("keeps the scan button inside the bar instead of lifting it out", () => {
+    const { screen } = renderBar("index");
+
+    const style = screen.getByLabelText("Escanear").props.style as Record<
+      string,
+      unknown
+    >;
+    expect(style.transform).toBeUndefined();
+    expect(style.height).toBe(SCAN_BUTTON_SIZE);
+    expect(style.width).toBe(SCAN_BUTTON_SIZE);
+    expect(SCAN_BUTTON_SIZE).toBeLessThan(NAV_BAR_HEIGHT);
   });
 
   it("renders no identifier anywhere (S11)", () => {

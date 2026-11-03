@@ -31,6 +31,18 @@ const tabDetails: Record<TabName, TabDetails> = {
 const LEFT_TABS: TabName[] = ["index", "products"];
 const RIGHT_TABS: TabName[] = ["coupons", "profile"];
 
+/**
+ * The bar's own geometry, as the L12 reference image actually shows it (read
+ * in T9; T8 only had a written description of it).
+ *
+ * The scan button sits INSIDE the pill — vertically centred and a little
+ * smaller than the bar is tall — instead of being lifted over its top edge.
+ * Both numbers live here so the button can never grow past the bar that
+ * contains it.
+ */
+export const NAV_BAR_HEIGHT = 68;
+export const SCAN_BUTTON_SIZE = 60;
+
 export function useNavBarScreenOptions() {
   const insets = useSafeAreaInsets();
 
@@ -103,10 +115,14 @@ export function FloatingTabBar({ state, navigation }: FloatingTabBarProps) {
       }}
     >
       <View
-        className="h-[68px] flex-row items-center rounded-full px-2 shadow-lg"
+        className="flex-row items-center rounded-full px-2 shadow-lg"
         style={{
-          backgroundColor: "#fcfcfc",
-          borderColor: "rgba(255, 255, 255, 0.85)",
+          height: NAV_BAR_HEIGHT,
+          // A soft neutral surface, a shade below the white cards, so the
+          // raised active item reads as lighter than the bar it sits on —
+          // the relationship the reference image shows.
+          backgroundColor: "#f1f2f4",
+          borderColor: "rgba(255, 255, 255, 0.9)",
           borderWidth: 1,
           shadowColor: "#0f172a",
           shadowOpacity: 0.12,
@@ -116,28 +132,29 @@ export function FloatingTabBar({ state, navigation }: FloatingTabBarProps) {
       >
         {LEFT_TABS.map(renderTab)}
 
-        <View className="w-16 items-center justify-center">
+        <View
+          className="items-center justify-center"
+          style={{ width: SCAN_BUTTON_SIZE + 8 }}
+        >
           <Pressable
             accessibilityLabel="Escanear"
             accessibilityHint="Abre el escáner para canjear un cupón"
             accessibilityRole="button"
             onPress={() => router.push("/scanner")}
-            className="h-16 w-16 items-center justify-center rounded-full"
+            className="items-center justify-center"
             style={{
+              height: SCAN_BUTTON_SIZE,
+              width: SCAN_BUTTON_SIZE,
+              borderRadius: SCAN_BUTTON_SIZE / 2,
               backgroundColor: "#0b0b0b",
               shadowColor: "#0f172a",
               shadowOpacity: 0.3,
               shadowRadius: 12,
               shadowOffset: { width: 0, height: 6 },
               elevation: 8,
-              transform: [{ translateY: -10 }],
             }}
           >
-            <MaterialCommunityIcons
-              name="scan-helper"
-              size={26}
-              color="#ffffff"
-            />
+            <MaterialCommunityIcons name="line-scan" size={26} color="#ffffff" />
           </Pressable>
         </View>
 
@@ -164,9 +181,21 @@ function NavItem({
       accessibilityRole="tab"
       accessibilityState={{ selected: focused }}
       onPress={onPress}
-      className={`h-[56px] flex-1 items-center justify-center gap-0.5 rounded-full px-1 ${
-        focused ? "bg-[#eceef3]" : ""
-      }`}
+      className="h-[56px] flex-1 items-center justify-center gap-0.5 rounded-full px-1"
+      // The active item is RAISED and lighter than the bar, not a darker chip:
+      // that is what the reference image shows under the selected tab.
+      style={
+        focused
+          ? {
+              backgroundColor: "#ffffff",
+              shadowColor: "#0f172a",
+              shadowOpacity: 0.1,
+              shadowRadius: 8,
+              shadowOffset: { width: 0, height: 3 },
+              elevation: 3,
+            }
+          : undefined
+      }
     >
       <MaterialCommunityIcons
         name={focused ? details.activeIcon : details.icon}
