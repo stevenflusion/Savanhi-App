@@ -37,6 +37,12 @@ export default function TabsLayout() {
           tab is hidden. `href: null` keeps it out of the tab bar. */}
       <Tabs.Screen name="orders" options={{ href: null }} />
       <Tabs.Screen
+        name="coupons"
+        options={{
+          title: "Cupones",
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: "Perfil",
