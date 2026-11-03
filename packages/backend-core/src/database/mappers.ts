@@ -198,6 +198,25 @@ export type CustomerClaimRecord = {
   store: { id: string; name: string };
 };
 
+/**
+ * A redemption as the tendero's scanner sees it: the claim's state after the
+ * call, the coupon it applies to, the store it belongs to, and the customer's
+ * first name (see `coupons/customer-name.ts` — the full name never leaves the
+ * data layer).
+ *
+ * The preview and the redeem path return the same record, which is what makes
+ * the preview a true dry run: the only difference is the stored state it
+ * reports.
+ */
+export type CouponRedemptionRecord = {
+  claimId: string;
+  status: CouponClaimStatus;
+  redeemedOn: string | null;
+  customerName: string | null;
+  coupon: CouponRecord;
+  store: { id: string; name: string };
+};
+
 export function mapCoupon(row: typeof coupons.$inferSelect): CouponRecord {
   return {
     id: row.id,

@@ -229,6 +229,59 @@ export const couponImageSetSchema = z.strictObject({
 });
 export type CouponImageSetRequest = z.infer<typeof couponImageSetSchema>;
 
+/**
+ * The token the tendero's scanner read out of the customer's QR (S3).
+ *
+ * The shape is deliberately loose: anything that is not a live token has to
+ * read as "no claim matches", so the stored hash is the only authority on
+ * whether a scan means something. A charset or length rule here would turn a
+ * scan of some other QR into a different answer than a scan of an expired
+ * Savanhi one, which is a distinction the tendero at the counter cannot act on.
+ */
+export const couponQrTokenSchema = z.string().trim().min(1).max(512);
+
+/**
+ * Redeeming, and previewing a redemption, both carry the scanned token in the
+ * BODY of a POST. The token is a bearer secret, so it must never travel in a
+ * path or a query string, which access logs and browser history keep — which is
+ * also why the side-effect-free preview is a POST rather than a GET.
+ */
+export const couponRedemptionRequestSchema = z.strictObject({
+  qrToken: couponQrTokenSchema,
+});
+export type CouponRedemptionRequest = z.infer<
+  typeof couponRedemptionRequestSchema
+>;
+
+/**
+ * What the tendero's confirmation screen shows after a scan: the coupon with
+ * its type, its value and its products (each with the category the app maps an
+ * icon from, S10), the store the claim belongs to, and who is standing at the
+ * counter.
+ *
+ * `status` is the claim's state AFTER the call, so it is `redeemed` from the
+ * redeem route and `claimed` from the preview, whose `redeemedOn` is null
+ * because nothing was written.
+ *
+ * `customerName` is the customer's FIRST name and nothing else — the surname is
+ * withheld, the email never travels, and `null` means the customer has not
+ * completed a profile yet, so the app supplies its own wording (S11 also keeps
+ * `claimId` out of what any screen renders).
+ */
+export type CouponRedemption = {
+  claimId: string;
+  status: CouponClaimStatus;
+  /** Date-only, and null until the claim is actually redeemed (S11). */
+  redeemedOn: string | null;
+  customerName: string | null;
+  coupon: Coupon;
+  store: CustomerClaimStore;
+};
+
+export type CouponRedemptionResponse = {
+  data: CouponRedemption;
+};
+
 /** Follow and unfollow both identify the store and nothing else (S7). */
 export const storeFollowSchema = z.strictObject({ storeId: z.uuid() });
 export type StoreFollowRequest = z.infer<typeof storeFollowSchema>;

@@ -19,6 +19,7 @@ export {
   COUPON_CALENDAR_TIMEZONE,
   couponCalendarToday,
 } from "./database/calendar.js";
+export { customerDisplayName } from "./coupons/customer-name.js";
 export { createQrToken, hashQrToken } from "./coupons/qr-token.js";
 export type { GeoPoint } from "./database/repositories/stores.repository.js";
 export { createEnv } from "./env.js";
@@ -64,6 +65,7 @@ export type {
   CouponProductDetailRecord,
   CouponProductRefRecord,
   CouponRecord,
+  CouponRedemptionRecord,
   CustomerClaimRecord,
   StoreDistanceRecord,
   StoreFollowRecord,

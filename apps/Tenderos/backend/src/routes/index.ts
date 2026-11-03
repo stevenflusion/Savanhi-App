@@ -10,11 +10,13 @@ import {
   COUPON_FEED_RADIUS_METERS,
   couponCreateSchema,
   couponImageSetSchema,
+  couponRedemptionRequestSchema,
   couponUpdateSchema,
   customerCoordinatesSchema,
   imageUploadTicketRequestSchema,
   storePhotoRegisterSchema,
   type Coupon,
+  type CouponRedemption,
   type CustomerClaim,
   type CustomerCouponFeedItem,
   type CustomerFeedStore,
@@ -28,6 +30,7 @@ import {
   type BackendContext,
   type CouponProductDetailRecord,
   type CouponRecord,
+  type CouponRedemptionRecord,
   type CustomerClaimRecord,
   type GeoPoint,
   type ObjectStorage,
@@ -728,6 +731,71 @@ export function createApiRouter({
           req.body.objectKey,
         );
         res.status(200).json({ data: await toCoupon(record) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * Redemption (S3, S8). The customer shows the QR, the tendero's scanner reads
+   * it, and these two routes are where the scanned token lands.
+   *
+   * The token travels in the BODY of a POST, never in the path or the query:
+   * it is a bearer secret, and a URL ends up in access logs. That is also why
+   * the side-effect-free preview is a POST and not a GET.
+   *
+   * Both are owner scoped inside the repository, against the store that owns
+   * the coupon the claim belongs to — a token the tendero does not own answers
+   * exactly like a token that matches nothing.
+   */
+  const toCouponRedemption = async (
+    record: CouponRedemptionRecord,
+  ): Promise<CouponRedemption> => ({
+    claimId: record.claimId,
+    status: record.status,
+    redeemedOn: record.redeemedOn,
+    customerName: record.customerName,
+    // The same assembler the coupon routes use, so the confirmation screen
+    // shows the title, the type's value and the per-category product icons
+    // exactly as the coupon list does (S5, S10).
+    coupon: await toCoupon(record.coupon),
+    store: record.store,
+  });
+
+  /** What this scan WOULD redeem. Reads only; the claim stays claimed. */
+  router.post(
+    "/api/v1/tenderos/coupon-redemptions/preview",
+    requireRole(["tendero"]),
+    validateBody(couponRedemptionRequestSchema),
+    async (req, res, next) => {
+      try {
+        const record = await coupons.previewRedemptionByQrToken(
+          req.body.qrToken,
+          req.auth?.user.id ?? "",
+        );
+        res.status(200).json({ data: await toCouponRedemption(record) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * Redeems the claim behind the scanned QR. 200 and not 201: the claim already
+   * exists — this transitions it — and the response is its end state.
+   */
+  router.post(
+    "/api/v1/tenderos/coupon-redemptions",
+    requireRole(["tendero"]),
+    validateBody(couponRedemptionRequestSchema),
+    async (req, res, next) => {
+      try {
+        const record = await coupons.redeemByQrToken(
+          req.body.qrToken,
+          req.auth?.user.id ?? "",
+        );
+        res.status(200).json({ data: await toCouponRedemption(record) });
       } catch (error) {
         next(error);
       }

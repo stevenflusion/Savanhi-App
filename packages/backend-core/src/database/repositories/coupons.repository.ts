@@ -5,6 +5,7 @@ import type {
   CouponUpdateRequest,
 } from "@repo/api-contracts";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { customerDisplayName } from "../../coupons/customer-name.js";
 import { createQrToken, hashQrToken } from "../../coupons/qr-token.js";
 import { AppError } from "../../errors.js";
 import { couponCalendarToday } from "../calendar.js";
@@ -14,6 +15,7 @@ import {
   type ClaimableCouponRecord,
   type CouponProductDetailRecord,
   type CouponRecord,
+  type CouponRedemptionRecord,
   type CustomerClaimRecord,
 } from "../mappers.js";
 import {
@@ -26,6 +28,7 @@ import {
   storeCatalogProducts,
   storeProductCategories,
   stores,
+  users,
 } from "../schema.js";
 
 /** A transaction handle, so one write path can span several statements. */
@@ -133,6 +136,25 @@ async function mappingConstraints<T>(run: () => Promise<T>): Promise<T> {
 const refKey = (ref: CouponProductRef) => `${ref.source}:${ref.productId}`;
 
 /**
+ * The ONE answer to a scan this tendero cannot redeem — a token that matches
+ * nothing and a live token belonging to another store's claim read exactly the
+ * same.
+ *
+ * This is a deliberate departure from the 403 the coupon and claim routes
+ * answer for someone else's id (T4/T5). That convention rests on the id having
+ * come from somewhere legitimate; a QR token is a bearer secret the tendero was
+ * never meant to hold, so telling them "this one exists, just not here" both
+ * confirms the secret is live and leaks that another store issued it.
+ */
+const QR_NOT_FOUND_MESSAGE = "No claim matches this QR code.";
+
+/** Redemption happens once (S8); the second scan of a QR is a conflict. */
+const ALREADY_REDEEMED_MESSAGE = "This coupon has already been redeemed.";
+
+/** The validity end date is the hard limit, paused or not (S6, L6). */
+const NO_LONGER_VALID_MESSAGE = "This coupon is no longer valid.";
+
+/**
  * A store-authored category name is free text the tendero typed, so it has no
  * slug and therefore no stable icon key; a catalog category's slug IS that key.
  * Both return null when the left join found no row, so the category is absent
@@ -207,6 +229,87 @@ export function createCouponsRepository(db: DatabaseConnection) {
     storeCatalogProductId:
       ref.source === "store_catalog" ? ref.productId : null,
     storeProductId: ref.source === "store_private" ? ref.productId : null,
+  });
+
+  /**
+   * Resolves a scanned QR token to its claim, with everything the tendero's
+   * confirmation screen renders and the two pieces of stored state redemption
+   * is gated on: who owns the store and whether the validity has passed.
+   *
+   * The token is matched by its HASH, which is all the database holds (S3), so
+   * the plaintext is never compared against anything stored.
+   *
+   * `for update of coupon_claims` locks ONLY the claim row — not the coupon and
+   * not the store, which other requests keep writing. Two parallel scans of one
+   * token therefore serialise here: the second waits, reads the committed
+   * `redeemed` status and is rejected. The preview locks the same way, so it can
+   * never report a state a redemption has already committed; it just writes
+   * nothing.
+   */
+  async function readRedemption(executor: Tx, qrToken: string) {
+    const today = couponCalendarToday();
+    const [row] = await executor
+      .select({
+        claim: couponClaims,
+        coupon: coupons,
+        storeId: stores.id,
+        storeName: stores.name,
+        storeOwnerUserId: stores.ownerUserId,
+        customerFullName: users.fullName,
+        expired: sql<boolean>`${coupons.validTo} < ${today}`,
+      })
+      .from(couponClaims)
+      .innerJoin(coupons, eq(couponClaims.couponId, coupons.id))
+      .innerJoin(stores, eq(coupons.storeId, stores.id))
+      .innerJoin(users, eq(couponClaims.customerUserId, users.id))
+      .where(eq(couponClaims.qrTokenHash, hashQrToken(qrToken)))
+      .for("update", { of: couponClaims });
+    if (!row) throw new AppError(QR_NOT_FOUND_MESSAGE, 404);
+    return row;
+  }
+
+  type RedemptionRow = Awaited<ReturnType<typeof readRedemption>>;
+
+  /**
+   * The three rules a scan has to satisfy, in the order the tendero would hit
+   * them. Ownership first, so a token of another store never reaches a message
+   * that describes stored state. Each rejection conflicts with STORED state
+   * rather than being a malformed request, so each one is a 409 — the same
+   * reading T4 and T5 applied, which also keeps the expired answer identical to
+   * the one the customer already gets when re-issuing a QR.
+   */
+  function assertRedeemable(row: RedemptionRow, tenderoUserId: string) {
+    if (row.storeOwnerUserId !== tenderoUserId) {
+      throw new AppError(QR_NOT_FOUND_MESSAGE, 404);
+    }
+    if (row.claim.status === "redeemed") {
+      throw new AppError(ALREADY_REDEEMED_MESSAGE, 409);
+    }
+    if (row.expired) {
+      throw new AppError(NO_LONGER_VALID_MESSAGE, 409);
+    }
+    // A paused coupon and a deactivated store are deliberately NOT checked:
+    // both block NEW claims only, and a claim already made stays redeemable up
+    // to the validity end date (S6, L6, L11).
+  }
+
+  /**
+   * One record shape for the preview and for the redemption, so the dry run can
+   * never describe the coupon differently from the real thing. The claim state
+   * is passed in because it is the ONE field that differs: the stored row for a
+   * preview, the updated row for a redemption.
+   */
+  const redemptionRecord = (
+    row: RedemptionRow,
+    claim: { status: typeof couponClaims.$inferSelect.status; redeemedOn: string | null },
+  ): CouponRedemptionRecord => ({
+    claimId: row.claim.id,
+    status: claim.status,
+    redeemedOn: claim.redeemedOn,
+    // The first name only; the full name never leaves this layer.
+    customerName: customerDisplayName(row.customerFullName),
+    coupon: mapCoupon(row.coupon),
+    store: { id: row.storeId, name: row.storeName },
   });
 
   /**
@@ -574,14 +677,28 @@ export function createCouponsRepository(db: DatabaseConnection) {
           const [row] = await tx
             .select({
               coupon: coupons,
+              storeActive: stores.active,
               withinValidity: sql<boolean>`${coupons.validFrom} <= ${today} and ${today} <= ${coupons.validTo}`,
             })
             .from(coupons)
+            .innerJoin(stores, eq(coupons.storeId, stores.id))
             .where(eq(coupons.id, couponId));
           if (!row) throw new AppError("Coupon not found.", 404);
 
           // Each rejection conflicts with STORED state rather than being a
           // malformed request, so each one is a 409 with its own reason.
+          //
+          // The store comes first, because it is the outer context: a
+          // deactivated store blocks NEW claims exactly the way a paused coupon
+          // does, and the claims already made stay redeemable until the
+          // validity end date (L11). Discovery already hides an inactive
+          // store's coupons (S7); this is the direct-id path behind it.
+          if (!row.storeActive) {
+            throw new AppError(
+              "This store is deactivated and is not accepting new claims.",
+              409,
+            );
+          }
           if (row.coupon.paused) {
             throw new AppError(
               "This coupon is paused and is not accepting new claims.",
@@ -673,7 +790,7 @@ export function createCouponsRepository(db: DatabaseConnection) {
         throw new AppError("This claim has already been redeemed.", 409);
       }
       if (row.expired) {
-        throw new AppError("This coupon is no longer valid.", 409);
+        throw new AppError(NO_LONGER_VALID_MESSAGE, 409);
       }
 
       const qrToken = createQrToken();
@@ -740,6 +857,78 @@ export function createCouponsRepository(db: DatabaseConnection) {
         coupon: mapCoupon(row.coupon),
         store: { id: row.storeId, name: row.storeName },
       }));
+    },
+
+    /**
+     * What a scan WOULD redeem, without redeeming it (S3).
+     *
+     * It exists for the scanner's own UX: the camera fires the moment a QR is
+     * in frame, and the tendero should see which coupon and which customer that
+     * was before committing the one-way transition. It therefore applies
+     * exactly the same rules as the redemption below and differs in one thing
+     * only — it writes nothing, so the claim it reports is still `claimed`.
+     */
+    async previewRedemptionByQrToken(
+      qrToken: string,
+      tenderoUserId: string,
+    ): Promise<CouponRedemptionRecord> {
+      return db.transaction(async (tx) => {
+        const row = await readRedemption(tx, qrToken);
+        assertRedeemable(row, tenderoUserId);
+        return redemptionRecord(row, row.claim);
+      });
+    },
+
+    /**
+     * Redeems the claim behind a scanned QR, exactly once (S3, S8).
+     *
+     * ONE transaction: the claim row is locked while ownership, the stored
+     * status and the validity are checked, and the transition itself carries
+     * `status = 'claimed'` in its WHERE — the same technique the QR re-issue
+     * uses. So even if the lock were lost, a second redemption would match zero
+     * rows instead of overwriting the first one's date and tendero.
+     *
+     * Claiming already reserved the stock, so NOTHING here touches
+     * `claimed_count` (S8); the counter is the reservation, not the redemption.
+     *
+     * `redeemed_on` is written from the coupon calendar day, not from the
+     * column's `current_date` default, for the reason `calendar.ts` records:
+     * after 19:00 local the UTC day is already tomorrow, and the date the
+     * tendero sees must be the day they actually scanned.
+     */
+    async redeemByQrToken(
+      qrToken: string,
+      tenderoUserId: string,
+    ): Promise<CouponRedemptionRecord> {
+      return mappingConstraints(() =>
+        db.transaction(async (tx) => {
+          const row = await readRedemption(tx, qrToken);
+          assertRedeemable(row, tenderoUserId);
+
+          const [redeemed] = await tx
+            .update(couponClaims)
+            .set({
+              status: "redeemed",
+              redeemedOn: couponCalendarToday(),
+              redeemedByUserId: tenderoUserId,
+            })
+            .where(
+              and(
+                eq(couponClaims.id, row.claim.id),
+                eq(couponClaims.status, "claimed"),
+              ),
+            )
+            .returning({
+              status: couponClaims.status,
+              redeemedOn: couponClaims.redeemedOn,
+            });
+          if (!redeemed) {
+            throw new AppError(ALREADY_REDEEMED_MESSAGE, 409);
+          }
+
+          return redemptionRecord(row, redeemed);
+        }),
+      );
     },
   };
 }
