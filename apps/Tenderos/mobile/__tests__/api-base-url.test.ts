@@ -1,14 +1,14 @@
 import { resolveTenderosApiBaseUrl } from "@/src/features/auth/infrastructure/api-base-url";
 
 describe("Tenderos API base URL", () => {
-  it("prefers the Expo host over a historical development override", () => {
+  it("prefers an explicit development override when an Expo host is present", () => {
     expect(
       resolveTenderosApiBaseUrl({
         override: "http://192.168.1.10:4300",
         expoHostUri: "192.168.1.25:8082",
         isDevelopment: true,
       }),
-    ).toBe("http://192.168.1.25:4300");
+    ).toBe("http://192.168.1.10:4300");
   });
 
   it("derives only the hostname from the Expo host URI", () => {

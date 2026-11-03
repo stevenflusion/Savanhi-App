@@ -80,6 +80,13 @@ export function resolveTenderosApiBaseUrl({
     return releaseUrl;
   }
 
+  if (explicitOverride) {
+    return normalizeHttpBaseUrl(
+      explicitOverride,
+      "EXPO_PUBLIC_TENDEROS_API_URL",
+    );
+  }
+
   if (expoHostUri !== undefined && expoHostUri !== null) {
     const hostname = hostnameFromExpoHostUri(expoHostUri);
     const formattedHostname =
@@ -90,13 +97,6 @@ export function resolveTenderosApiBaseUrl({
     return normalizeHttpBaseUrl(
       `http://${formattedHostname}:4300`,
       "Expo-derived API URL",
-    );
-  }
-
-  if (explicitOverride) {
-    return normalizeHttpBaseUrl(
-      explicitOverride,
-      "EXPO_PUBLIC_TENDEROS_API_URL",
     );
   }
 
