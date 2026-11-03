@@ -282,6 +282,147 @@ export type CouponRedemptionResponse = {
   data: CouponRedemption;
 };
 
+/**
+ * Tendero metrics (S9). Three facts the owning tendero reads about their own
+ * store: the claim/redemption funnel per coupon, how many customers follow the
+ * store, and the history of redemptions.
+ *
+ * The funnel has exactly one subtlety, and it is a product rule rather than an
+ * implementation detail: claiming and redeeming are two separate moments (S8),
+ * and the validity end date is the hard limit on the second one (S6). So a
+ * claim that was never redeemed and is now past that date counts as CLAIMED and
+ * never as redeemed — it stays in `claimedCount`, it is absent from
+ * `redeemedCount`, and it never appears in the redemption history. Nothing
+ * moves it anywhere later; the number of claims a coupon collected is a fact
+ * about the past.
+ *
+ * `redeemedCount <= claimedCount` therefore always holds, and the difference is
+ * the coupons customers took and did not use.
+ */
+export type CouponMetrics = {
+  /** Lets the app open the coupon; never rendered (S11). */
+  couponId: string;
+  title: string;
+  type: CouponType;
+  totalStock: number;
+  /** Claims this coupon collected, redeemed or not. */
+  claimedCount: number;
+  /** Claims that were actually redeemed in the store. */
+  redeemedCount: number;
+  /** What is left to claim; zero means the coupon is exhausted. */
+  remainingStock: number;
+};
+
+/**
+ * The store-wide figures of the same response, summed from its own `coupons`
+ * array rather than queried separately, so the summary and the per-coupon rows
+ * can never disagree.
+ */
+export type StoreMetricsTotals = {
+  couponCount: number;
+  claimedCount: number;
+  redeemedCount: number;
+  remainingStock: number;
+};
+
+/**
+ * One line of the redemption history: which coupon was redeemed, who stood at
+ * the counter, and on which day.
+ *
+ * `customerName` is the customer's FIRST name and nothing else — the surname is
+ * withheld and the email never travels, exactly as in `CouponRedemption` — and
+ * it is null when the customer never completed a profile, so the app supplies
+ * its own wording. `redeemedOn` is date-only: the schema stores no redemption
+ * time at all, so no screen can render one (S11).
+ */
+export type CouponRedemptionHistoryEntry = {
+  /** A stable list key; never rendered (S11). */
+  claimId: string;
+  couponTitle: string;
+  customerName: string | null;
+  redeemedOn: string;
+};
+
+/**
+ * Redemption history grows for the life of a store, so it is never returned
+ * whole: one page comes back with the window it was read through, and
+ * `nextOffset` is the offset of the next page or null when this was the last
+ * one. It is derived by reading one row past the limit, so a client never pays
+ * for a `count(*)` over the whole history to learn there is nothing more.
+ */
+export type CouponRedemptionHistoryPage = {
+  entries: CouponRedemptionHistoryEntry[];
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+};
+
+/** The default page of history when the caller asks for no particular one. */
+export const REDEMPTION_HISTORY_DEFAULT_LIMIT = 20;
+
+/**
+ * The hard ceiling on one page. A caller asking for more is REJECTED rather
+ * than silently clamped: a client that believes it read 500 entries and
+ * received 100 would page incorrectly from then on.
+ */
+export const REDEMPTION_HISTORY_MAX_LIMIT = 100;
+
+/**
+ * The page window, as it arrives in a query string — hence the coercion, and
+ * hence the explicit finite and integer checks: `Number("")` is `0`, so a blank
+ * `limit=` would otherwise read as a request for no rows at all.
+ */
+export const redemptionHistoryQuerySchema = z.strictObject({
+  limit: z.coerce
+    .number()
+    .refine(Number.isFinite, "The limit must be a number.")
+    .int()
+    .min(1)
+    .max(REDEMPTION_HISTORY_MAX_LIMIT)
+    .default(REDEMPTION_HISTORY_DEFAULT_LIMIT),
+  offset: z.coerce
+    .number()
+    .refine(Number.isFinite, "The offset must be a number.")
+    .int()
+    .min(0)
+    .default(0),
+});
+export type RedemptionHistoryQuery = z.infer<
+  typeof redemptionHistoryQuerySchema
+>;
+
+/**
+ * How many redemptions the metrics summary carries inline. It is a preview for
+ * the tendero's home tab, not the history itself: the dedicated history route
+ * is where paging happens.
+ */
+export const STORE_METRICS_RECENT_REDEMPTIONS = 5;
+
+/**
+ * Everything the tendero's home tab shows about one of their stores, in ONE
+ * response (S9): the follower count, the per-coupon funnel, the store-wide
+ * totals and the newest redemptions. The tab therefore costs one request, and
+ * the dedicated history route exists for the screen that pages through it.
+ *
+ * `storeId` is here so a client holding several stores can tell the responses
+ * apart; it is never rendered (S11).
+ */
+export type StoreMetrics = {
+  storeId: string;
+  followersCount: number;
+  totals: StoreMetricsTotals;
+  coupons: CouponMetrics[];
+  recentRedemptions: CouponRedemptionHistoryEntry[];
+};
+
+export type StoreMetricsResponse = {
+  data: StoreMetrics;
+};
+
+export type CouponRedemptionHistoryResponse = {
+  data: CouponRedemptionHistoryPage;
+};
+
 /** Follow and unfollow both identify the store and nothing else (S7). */
 export const storeFollowSchema = z.strictObject({ storeId: z.uuid() });
 export type StoreFollowRequest = z.infer<typeof storeFollowSchema>;

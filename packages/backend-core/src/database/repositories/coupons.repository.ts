@@ -13,8 +13,10 @@ import type { DatabaseConnection } from "../connection.js";
 import {
   mapCoupon,
   type ClaimableCouponRecord,
+  type CouponMetricsRecord,
   type CouponProductDetailRecord,
   type CouponRecord,
+  type CouponRedemptionEntryRecord,
   type CouponRedemptionRecord,
   type CustomerClaimRecord,
 } from "../mappers.js";
@@ -599,6 +601,118 @@ export function createCouponsRepository(db: DatabaseConnection) {
           }),
         ),
       ];
+    },
+
+    /**
+     * The claim/redemption funnel of every coupon of ONE store (S9).
+     *
+     * The counts come from the claim rows themselves, in one grouped query
+     * rather than one query per coupon: `count(claims)` is how many customers
+     * took the coupon and the `filter` is how many of those actually redeemed
+     * it, so `redeemed <= claimed` holds by construction.
+     *
+     * A coupon with no claims still appears, with zeros — hence the LEFT join.
+     * A tendero needs to see the coupon nobody took; it is the most actionable
+     * row on the screen.
+     *
+     * An expired, unredeemed claim is counted exactly once, as a CLAIM: nothing
+     * in this query looks at the validity window, because the funnel is a fact
+     * about the past and the claim happened (S6, S8). It is the redemption that
+     * the validity end date forbids, and a redemption that never happened
+     * contributes nothing to `redeemed_count`.
+     *
+     * The casts to `int` are deliberate: `count()` is `bigint` and the driver
+     * would otherwise hand it back as a string.
+     */
+    async listMetricsByStoreId(
+      storeId: string,
+    ): Promise<CouponMetricsRecord[]> {
+      return (
+        await db
+          .select({
+            couponId: coupons.id,
+            title: coupons.title,
+            type: coupons.type,
+            totalStock: coupons.totalStock,
+            reservedCount: coupons.claimedCount,
+            claimedCount: sql<number>`count(${couponClaims.id})::int`,
+            redeemedCount: sql<number>`count(${couponClaims.id}) filter (where ${couponClaims.status} = 'redeemed')::int`,
+          })
+          .from(coupons)
+          .leftJoin(couponClaims, eq(couponClaims.couponId, coupons.id))
+          .where(eq(coupons.storeId, storeId))
+          // Grouping by the primary key is what lets the other coupon columns
+          // travel ungrouped.
+          .groupBy(coupons.id)
+          // Newest coupon first, matching the tendero's own coupon list.
+          // `created_at` is internal and is never rendered (S11).
+          .orderBy(desc(coupons.createdAt))
+      );
+    },
+
+    /**
+     * One page of a store's redemption history, newest first (S9).
+     *
+     * Ordering: the display date descending, then the claim's internal
+     * `created_at` and finally its id. The tiebreaker is needed because
+     * `redeemed_on` is a DATE and nothing finer is stored — S11 keeps clock
+     * times out of the product, so several redemptions on one day are
+     * genuinely undated relative to each other. The fallback is deterministic
+     * and total, so paging never shows one entry twice or skips one, even
+     * though it orders same-day redemptions by when the CLAIM was made rather
+     * than by when the scan happened.
+     *
+     * `hasMore` comes from reading one row past the limit instead of from a
+     * `count(*)` over the whole history, which would grow with the store.
+     *
+     * The full name is turned into the first name here, so it never leaves this
+     * layer (see `coupons/customer-name.ts`).
+     */
+    async listRedemptionHistoryByStoreId(
+      storeId: string,
+      page: { limit: number; offset: number },
+    ): Promise<{ entries: CouponRedemptionEntryRecord[]; hasMore: boolean }> {
+      const rows = await db
+        .select({
+          claimId: couponClaims.id,
+          couponTitle: coupons.title,
+          customerFullName: users.fullName,
+          redeemedOn: couponClaims.redeemedOn,
+        })
+        .from(couponClaims)
+        .innerJoin(coupons, eq(couponClaims.couponId, coupons.id))
+        .innerJoin(users, eq(couponClaims.customerUserId, users.id))
+        .where(
+          and(
+            eq(coupons.storeId, storeId),
+            eq(couponClaims.status, "redeemed"),
+          ),
+        )
+        .orderBy(
+          desc(couponClaims.redeemedOn),
+          desc(couponClaims.createdAt),
+          desc(couponClaims.id),
+        )
+        .limit(page.limit + 1)
+        .offset(page.offset);
+
+      return {
+        entries: rows.slice(0, page.limit).map((row) => {
+          // `coupon_claims_redemption_chk` forces a redeemed claim to carry its
+          // date, and only redeemed claims are read, so this is unreachable —
+          // it is here because the column is nullable in general.
+          if (row.redeemedOn === null) {
+            throw new AppError("A redeemed claim has no date.", 502);
+          }
+          return {
+            claimId: row.claimId,
+            couponTitle: row.couponTitle,
+            customerName: customerDisplayName(row.customerFullName),
+            redeemedOn: row.redeemedOn,
+          };
+        }),
+        hasMore: rows.length > page.limit,
+      };
     },
 
     /**

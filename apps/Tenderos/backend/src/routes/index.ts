@@ -14,20 +14,27 @@ import {
   couponUpdateSchema,
   customerCoordinatesSchema,
   imageUploadTicketRequestSchema,
+  redemptionHistoryQuerySchema,
   storePhotoRegisterSchema,
+  STORE_METRICS_RECENT_REDEMPTIONS,
   type Coupon,
+  type CouponMetrics,
   type CouponRedemption,
+  type CouponRedemptionHistoryPage,
   type CustomerClaim,
   type CustomerCouponFeedItem,
   type CustomerFeedStore,
   type CustomerStore,
   type NearbyStore,
+  type StoreMetrics,
+  type StoreMetricsTotals,
   type StorePhoto,
 } from "@repo/api-contracts";
 import {
   AppError,
   isImageKeyOwnedBy,
   type BackendContext,
+  type CouponMetricsRecord,
   type CouponProductDetailRecord,
   type CouponRecord,
   type CouponRedemptionRecord,
@@ -796,6 +803,132 @@ export function createApiRouter({
           req.auth?.user.id ?? "",
         );
         res.status(200).json({ data: await toCouponRedemption(record) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * Metrics (S9). Read-only, owner scoped, and deliberately TWO routes: one
+   * summary the home tab reads in a single request, and one paged history for
+   * the screen that scrolls through it.
+   *
+   * Both hang off the store, because every metric is a fact about one store and
+   * the tendero may own several.
+   */
+
+  const toCouponMetrics = (record: CouponMetricsRecord): CouponMetrics => ({
+    couponId: record.couponId,
+    title: record.title,
+    type: record.type,
+    totalStock: record.totalStock,
+    claimedCount: record.claimedCount,
+    redeemedCount: record.redeemedCount,
+    // Derived from the RESERVATION counter, exactly as the coupon routes do:
+    // that counter is what a new claim is checked against, so it is what "what
+    // is left" has to mean.
+    remainingStock: Math.max(record.totalStock - record.reservedCount, 0),
+  });
+
+  /**
+   * The store-wide figures, summed from the very array that travels in the same
+   * response rather than from a second query — so the big number on the home
+   * tab and the rows underneath it cannot tell different stories.
+   */
+  const toStoreMetricsTotals = (
+    entries: CouponMetrics[],
+  ): StoreMetricsTotals =>
+    entries.reduce<StoreMetricsTotals>(
+      (totals, entry) => ({
+        couponCount: totals.couponCount + 1,
+        claimedCount: totals.claimedCount + entry.claimedCount,
+        redeemedCount: totals.redeemedCount + entry.redeemedCount,
+        remainingStock: totals.remainingStock + entry.remainingStock,
+      }),
+      {
+        couponCount: 0,
+        claimedCount: 0,
+        redeemedCount: 0,
+        remainingStock: 0,
+      },
+    );
+
+  /**
+   * Everything the home tab shows about one store, in one round trip (S9): the
+   * follower count, the per-coupon funnel, the totals and a preview of the
+   * newest redemptions. The three reads are independent, so they run together.
+   */
+  router.get(
+    "/api/v1/tenderos/stores/:storeId/metrics",
+    requireRole(["tendero"]),
+    validateParams(storeIdParamsSchema),
+    async (req, res, next) => {
+      try {
+        const storeId = await requireOwnedStore(
+          req.auth?.user.id ?? "",
+          String(req.params.storeId),
+        );
+        const [followersCount, metrics, recent] = await Promise.all([
+          stores.countFollowersByStore(storeId),
+          coupons.listMetricsByStoreId(storeId),
+          // The SAME reader the history route uses, so the preview can never
+          // order or shape its entries differently from the full list.
+          coupons.listRedemptionHistoryByStoreId(storeId, {
+            limit: STORE_METRICS_RECENT_REDEMPTIONS,
+            offset: 0,
+          }),
+        ]);
+
+        const couponMetrics = metrics.map(toCouponMetrics);
+        const data: StoreMetrics = {
+          storeId,
+          followersCount,
+          totals: toStoreMetricsTotals(couponMetrics),
+          coupons: couponMetrics,
+          recentRedemptions: recent.entries,
+        };
+        res.status(200).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * The paged redemption history (S9). A store's history only grows, so there
+   * is no unpaged form of this route at all: the window is validated, bounded
+   * and echoed back with the offset of the next page.
+   *
+   * The query is parsed here rather than through `validateQuery`, for the
+   * reason the customer coordinates are (Express 5 defines `req.query` with a
+   * getter only, so assigning to it throws). A `ZodError` from here reaches the
+   * shared error handler and becomes the same 400 a body rejection does, which
+   * is what rejects a limit past the maximum instead of silently clamping it.
+   */
+  router.get(
+    "/api/v1/tenderos/stores/:storeId/redemptions",
+    requireRole(["tendero"]),
+    validateParams(storeIdParamsSchema),
+    async (req, res, next) => {
+      try {
+        const storeId = await requireOwnedStore(
+          req.auth?.user.id ?? "",
+          String(req.params.storeId),
+        );
+        const { limit, offset } = redemptionHistoryQuerySchema.parse(req.query);
+        const { entries, hasMore } =
+          await coupons.listRedemptionHistoryByStoreId(storeId, {
+            limit,
+            offset,
+          });
+        const data: CouponRedemptionHistoryPage = {
+          entries,
+          limit,
+          offset,
+          nextOffset: hasMore ? offset + limit : null,
+        };
+        res.status(200).json({ data });
       } catch (error) {
         next(error);
       }

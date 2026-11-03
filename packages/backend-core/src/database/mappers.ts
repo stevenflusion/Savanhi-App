@@ -149,6 +149,49 @@ export type StoreFollowRecord = {
 };
 
 /**
+ * The claim/redemption funnel of one coupon (S9), read straight out of the
+ * claim rows that produced it.
+ *
+ * `claimedCount` counts the claims that EXIST, `redeemedCount` the subset of
+ * them that was redeemed, and `reservedCount` is the stored `claimed_count`
+ * counter — the reservation that gates claiming (S8). The route derives
+ * `remainingStock` from the reservation, exactly as the coupon routes already
+ * do, rather than from the row count: the counter is what a new claim is
+ * checked against, so it is the only honest basis for "what is left".
+ *
+ * The two agree in every normal state, and the suite pins that. They can part
+ * company in exactly one case: deleting a customer account cascades their claim
+ * rows away without releasing the reservation, after which the funnel reports
+ * the claims that still exist while the stock still reflects the one that was
+ * taken.
+ */
+export type CouponMetricsRecord = {
+  couponId: string;
+  title: string;
+  type: CouponType;
+  totalStock: number;
+  claimedCount: number;
+  redeemedCount: number;
+  reservedCount: number;
+};
+
+/**
+ * One redemption as the tendero's history renders it. The customer's FIRST name
+ * only — `customerDisplayName` is applied in the repository, so the full name
+ * never leaves the data layer (the same rule the redemption response follows).
+ *
+ * `redeemedOn` is the DATE column and is non-null by construction here:
+ * `coupon_claims_redemption_chk` forces a redeemed claim to record its date,
+ * and only redeemed claims are read.
+ */
+export type CouponRedemptionEntryRecord = {
+  claimId: string;
+  couponTitle: string;
+  customerName: string | null;
+  redeemedOn: string;
+};
+
+/**
  * A store as the customer-facing reads return it, with the distance from the
  * customer's position in METRES — the raw measure, which the route turns into
  * the kilometre value a card renders, exactly as it derives an image URL from

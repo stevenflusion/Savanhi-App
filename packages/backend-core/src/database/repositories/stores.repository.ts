@@ -96,6 +96,24 @@ export function createStoresRepository(db: DatabaseConnection) { return {
   },
 
   /**
+   * How many customers follow one store (S9). It lives here rather than with
+   * the coupon metrics because `store_follows` is this repository's table — the
+   * same one `followForCustomer` writes — and the unique pair on
+   * (customer, store) is what makes a plain `count(*)` the follower count
+   * rather than a count of follow actions.
+   *
+   * The store is a filter and not a check: the route has already established
+   * that the authenticated tendero owns it.
+   */
+  async countFollowersByStore(storeId: string): Promise<number> {
+    const [result] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(storeFollows)
+      .where(eq(storeFollows.storeId, storeId));
+    return result?.count ?? 0;
+  },
+
+  /**
    * Follow is idempotent (S7): the unique pair makes the second call a no-op
    * instead of a second row, so the response is the end state and never an
    * error. A store that does not exist, or that is no longer active, is a 404

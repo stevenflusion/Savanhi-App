@@ -62,9 +62,11 @@ export {
 export type {
   ClaimableCouponRecord,
   CouponClaimRecord,
+  CouponMetricsRecord,
   CouponProductDetailRecord,
   CouponProductRefRecord,
   CouponRecord,
+  CouponRedemptionEntryRecord,
   CouponRedemptionRecord,
   CustomerClaimRecord,
   StoreDistanceRecord,
