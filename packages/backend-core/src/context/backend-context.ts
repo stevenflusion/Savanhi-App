@@ -8,6 +8,7 @@ import { createCatalogRepository } from "../database/repositories/catalog.reposi
 import { createDeliveriesRepository } from "../database/repositories/deliveries.repository.js";
 import { createOrdersRepository } from "../database/repositories/orders.repository.js";
 import { createProductsRepository } from "../database/repositories/products.repository.js";
+import { createStorePhotosRepository } from "../database/repositories/store-photos.repository.js";
 import { createStoresRepository } from "../database/repositories/stores.repository.js";
 import { createUsersRepository } from "../database/repositories/users.repository.js";
 import type { AuthRole } from "@repo/api-contracts/auth";
@@ -18,6 +19,7 @@ export type BackendRepositories = {
   users: ReturnType<typeof createUsersRepository>;
   catalog: ReturnType<typeof createCatalogRepository>;
   stores: ReturnType<typeof createStoresRepository>;
+  storePhotos: ReturnType<typeof createStorePhotosRepository>;
   products: ReturnType<typeof createProductsRepository>;
   orders: ReturnType<typeof createOrdersRepository>;
   deliveries: ReturnType<typeof createDeliveriesRepository>;
@@ -40,6 +42,7 @@ export function createBackendContext(
     users: createUsersRepository(db),
     catalog: createCatalogRepository(db),
     stores: createStoresRepository(db),
+    storePhotos: createStorePhotosRepository(db),
     products: createProductsRepository(db),
     orders: createOrdersRepository(db),
     deliveries: createDeliveriesRepository(db),

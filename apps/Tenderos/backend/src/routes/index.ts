@@ -7,8 +7,16 @@ import {
   storeProductUpdateSchema,
 } from "@repo/api-contracts/catalog";
 import {
+  imageUploadTicketRequestSchema,
+  storePhotoRegisterSchema,
+  type StorePhoto,
+} from "@repo/api-contracts";
+import {
   AppError,
+  isImageKeyOwnedBy,
   type BackendContext,
+  type ObjectStorage,
+  type StorePhotoRecord,
   validateBody,
   validateParams,
 } from "@repo/backend-core";
@@ -40,12 +48,39 @@ type RequireRole = (roles: AuthRole[]) => RequestHandler;
 export function createApiRouter({
   context,
   requireRole,
+  storage,
 }: {
   context: BackendContext;
   requireRole: RequireRole;
+  storage: ObjectStorage;
 }): ExpressRouter {
   const router = Router();
-  const { catalog, products, stores } = context.repositories;
+  const {
+    catalog,
+    products,
+    storePhotos,
+    stores,
+  } = context.repositories;
+
+  /** Rejects a store the authenticated tendero does not own. */
+  const requireOwnedStore = async (
+    ownerProfileId: string,
+    storeId: string,
+  ) => {
+    if (!(await stores.listIdsByOwner(ownerProfileId)).includes(storeId)) {
+      throw new AppError("Store does not belong to this tendero.", 403);
+    }
+    return storeId;
+  };
+
+  const toStorePhoto = async (
+    record: StorePhotoRecord,
+  ): Promise<StorePhoto> => ({
+    id: record.id,
+    url: await storage.buildReadUrl(record.objectKey),
+    contentType: record.contentType,
+    position: record.position,
+  });
 
   router.get("/api/v1/tenderos/status", (_req, res) => {
     res.status(200).json({
@@ -60,8 +95,78 @@ export function createApiRouter({
     requireRole(["tendero"]),
     async (req, res, next) => {
       try {
-        const data = await stores.listByOwner(req.auth?.user.id ?? "");
+        const owned = await stores.listByOwner(req.auth?.user.id ?? "");
+        const records = await storePhotos.listByStoreIds(
+          owned.map((store) => store.id),
+        );
+        const photosByStore = new Map<string, StorePhoto[]>();
+        for (const record of records) {
+          const photos = photosByStore.get(record.storeId) ?? [];
+          photos.push(await toStorePhoto(record));
+          photosByStore.set(record.storeId, photos);
+        }
+        const data = owned.map((store) => ({
+          ...store,
+          photos: photosByStore.get(store.id) ?? [],
+        }));
         res.status(200).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * Issues a presigned PUT so the image bytes bypass `express.json`'s 100kb
+   * limit. The object key is generated here; a client never names its own.
+   */
+  router.post(
+    "/api/v1/tenderos/stores/:storeId/photo-uploads",
+    requireRole(["tendero"]),
+    validateParams(storeIdParamsSchema),
+    validateBody(imageUploadTicketRequestSchema),
+    async (req, res, next) => {
+      try {
+        const storeId = await requireOwnedStore(
+          req.auth?.user.id ?? "",
+          String(req.params.storeId),
+        );
+        const data = await storage.createImageUploadTicket({
+          owner: { scope: "stores", ownerId: storeId },
+          contentType: req.body.contentType,
+          contentLength: req.body.contentLength,
+        });
+        res.status(201).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.post(
+    "/api/v1/tenderos/stores/:storeId/photos",
+    requireRole(["tendero"]),
+    validateParams(storeIdParamsSchema),
+    validateBody(storePhotoRegisterSchema),
+    async (req, res, next) => {
+      try {
+        const storeId = await requireOwnedStore(
+          req.auth?.user.id ?? "",
+          String(req.params.storeId),
+        );
+        if (
+          !isImageKeyOwnedBy(req.body.objectKey, {
+            scope: "stores",
+            ownerId: storeId,
+          })
+        ) {
+          throw new AppError(
+            "This image reference does not belong to this store.",
+            403,
+          );
+        }
+        const record = await storePhotos.createForStore(storeId, req.body);
+        res.status(201).json({ data: await toStorePhoto(record) });
       } catch (error) {
         next(error);
       }

@@ -2,9 +2,31 @@ import type { AuthUser } from "@repo/api-contracts/auth";
 import type { Delivery } from "@repo/api-contracts/deliveries";
 import type { Order } from "@repo/api-contracts/orders";
 import type { Product, Store } from "@repo/api-contracts/products";
+import type { ImageContentType } from "@repo/api-contracts";
 import type { AdminUser } from "@repo/api-contracts/users";
 import { normalizeRole } from "../roles.js";
-import { deliveries, orders, products, stores, users } from "./schema.js";
+import {
+  deliveries,
+  orders,
+  products,
+  storePhotos,
+  stores,
+  users,
+} from "./schema.js";
+
+/**
+ * Application-side store photo. It carries the object key instead of a URL,
+ * because turning a key into a readable URL is a storage concern and may need
+ * to sign a request.
+ */
+export type StorePhotoRecord = {
+  id: string;
+  storeId: string;
+  objectKey: string;
+  contentType: ImageContentType;
+  byteSize: number;
+  position: number;
+};
 
 type UserRow = typeof users.$inferSelect & { roleName: string };
 
@@ -39,6 +61,18 @@ export function mapStore(row: typeof stores.$inferSelect): Store {
     bankAccountType: row.bankAccountType as Store["bankAccountType"],
     active: row.active,
     createdAt: row.createdAt?.toISOString() ?? null,
+  };
+}
+export function mapStorePhoto(
+  row: typeof storePhotos.$inferSelect,
+): StorePhotoRecord {
+  return {
+    id: row.id,
+    storeId: row.storeId,
+    objectKey: row.objectKey,
+    contentType: row.contentType as ImageContentType,
+    byteSize: row.byteSize,
+    position: row.position,
   };
 }
 export function mapProduct(row: typeof products.$inferSelect): Product {

@@ -21,6 +21,8 @@
     "bootstrap:dev-admin": "tsx src/scripts/bootstrap-dev-admin.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1161.0",
+    "@aws-sdk/s3-request-presigner": "^3.1161.0",
     "@repo/api-contracts": "workspace:*",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",

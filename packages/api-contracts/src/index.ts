@@ -4,4 +4,5 @@ export * from "./deliveries.js";
 export * from "./orders.js";
 export * from "./products.js";
 export * from "./shared.js";
+export * from "./storage.js";
 export * from "./users.js";

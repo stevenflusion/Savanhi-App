@@ -11,6 +11,7 @@ export { createCatalogRepository } from "./database/repositories/catalog.reposit
 export { createDeliveriesRepository } from "./database/repositories/deliveries.repository.js";
 export { createOrdersRepository } from "./database/repositories/orders.repository.js";
 export { createProductsRepository } from "./database/repositories/products.repository.js";
+export { createStorePhotosRepository } from "./database/repositories/store-photos.repository.js";
 export { createStoresRepository } from "./database/repositories/stores.repository.js";
 export { createUsersRepository } from "./database/repositories/users.repository.js";
 export { createEnv } from "./env.js";
@@ -29,5 +30,14 @@ export { validateBody, validateParams, validateQuery } from "./middleware/valida
 export { createMemoryRateLimiter, rateLimit } from "./middleware/rate-limit.js";
 export type { RateLimiter } from "./middleware/rate-limit.js";
 export { AUTH_ROLES, isAuthRole, normalizeRole } from "./roles.js";
-export { mapAdminUser, mapDelivery, mapOrder, mapProduct, mapProfile, mapStore } from "./database/mappers.js";
+export { createStorageEnv } from "./storage/config.js";
+export type { StorageEnv } from "./storage/config.js";
+export {
+  buildImageKeyPrefix,
+  createObjectStorage,
+  isImageKeyOwnedBy,
+} from "./storage/object-storage.js";
+export type { ImageOwner, ObjectStorage } from "./storage/object-storage.js";
+export { mapAdminUser, mapDelivery, mapOrder, mapProduct, mapProfile, mapStore, mapStorePhoto } from "./database/mappers.js";
+export type { StorePhotoRecord } from "./database/mappers.js";
 export type { BackendEnv } from "./types/env.js";

@@ -450,6 +450,46 @@ export const storeCatalogProducts = pgTable(
   }),
 );
 
+/**
+ * Object references for a store's photos. The bytes live in Garage; only the
+ * generated object key is persisted, so the public URL strategy can change
+ * without a migration.
+ */
+export const storePhotos = pgTable(
+  "store_photos",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeId: uuid("store_id")
+      .references(() => stores.id, { onDelete: "cascade" })
+      .notNull(),
+    objectKey: text("object_key").notNull(),
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    position: integer("position").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    storeIndex: index("store_photos_store_idx").on(table.storeId),
+    objectKeyIndex: uniqueIndex("store_photos_object_key_uidx").on(
+      table.objectKey,
+    ),
+    contentTypeCheck: check(
+      "store_photos_content_type_chk",
+      sql`${table.contentType} in ('image/jpeg', 'image/png', 'image/webp')`,
+    ),
+    byteSizeCheck: check(
+      "store_photos_byte_size_positive_chk",
+      sql`${table.byteSize} > 0`,
+    ),
+    positionCheck: check(
+      "store_photos_position_nonnegative_chk",
+      sql`${table.position} >= 0`,
+    ),
+  }),
+);
+
 export const storeProductCategories = pgTable(
   "store_product_categories",
   {
@@ -518,6 +558,7 @@ export const schema = {
   catalogProductIdentifiers,
   catalogObservedPrices,
   storeCatalogProducts,
+  storePhotos,
   storeProductCategories,
   orders,
   orderItems,

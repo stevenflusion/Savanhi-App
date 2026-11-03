@@ -2,8 +2,9 @@ import {
   createAuthRouter,
   createBackendApp,
   createBackendContext,
+  createObjectStorage,
 } from "@repo/backend-core";
-import { env } from "./config/env.js";
+import { env, storageEnv } from "./config/env.js";
 import { createApiRouter } from "./routes/index.js";
 
 export function createApp() {
@@ -13,9 +14,10 @@ export function createApp() {
   const { authRouter, requireRole } = createAuthRouter(context.authService, {
     limits: context.env.rateLimits,
   });
+  const storage = createObjectStorage(storageEnv);
 
   return createBackendApp({
     env,
-    routers: [authRouter, createApiRouter({ context, requireRole })],
+    routers: [authRouter, createApiRouter({ context, requireRole, storage })],
   });
 }

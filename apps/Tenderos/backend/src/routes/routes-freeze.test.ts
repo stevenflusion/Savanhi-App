@@ -6,8 +6,9 @@ import {
   createAuthRouter,
   createBackendApp,
   createBackendContext,
+  createObjectStorage,
 } from "@repo/backend-core";
-import type { BackendEnv } from "@repo/backend-core";
+import type { BackendEnv, StorageEnv } from "@repo/backend-core";
 import { createApiRouter } from "./index.js";
 
 const env: BackendEnv = {
@@ -32,6 +33,18 @@ const env: BackendEnv = {
   },
 };
 
+/** Never reached: these cases stop at routing and authentication. */
+const storageEnv: StorageEnv = {
+  endpoint: "http://127.0.0.1:3900",
+  region: "garage",
+  bucket: "savanhi-dev",
+  accessKeyId: "GK1a2b3c4d5e6f708192a3b4c5",
+  secretAccessKey:
+    "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  uploadUrlTtlSeconds: 900,
+  readUrlTtlSeconds: 3600,
+};
+
 /**
  * These cases only exercise routing and authentication, so no request ever
  * reaches a repository and the PostgreSQL pool stays idle.
@@ -43,9 +56,10 @@ async function startHarness() {
   const { authRouter, requireRole } = createAuthRouter(context.authService, {
     limits: context.env.rateLimits,
   });
+  const storage = createObjectStorage(storageEnv);
   const server = createBackendApp({
     env,
-    routers: [authRouter, createApiRouter({ context, requireRole })],
+    routers: [authRouter, createApiRouter({ context, requireRole, storage })],
   }).listen(0);
   await new Promise<void>((resolve, reject) => {
     server.once("listening", resolve);
@@ -59,6 +73,7 @@ async function startHarness() {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
+      await storage.destroy();
       await context.db.pool.end();
     },
   };
