@@ -1,0 +1,163 @@
+# Cuponera MVP (store + customer)
+
+Objective: Simplify Savanhi to a store+customer coupon MVP (cuponera) to collect data.
+Branch: `feat/cuponera-mvp`; delivery strategy `ask-on-risk`; reviewable work units of ~400 authored changed lines (advisory).
+Runner (as found): backend `pnpm --filter @repo/backend-core test` (`tsx --test`, contract suites live in `src/<area>/<area>-contract.test.ts`), focused catalog suite `pnpm --filter @repo/backend-core test:catalog`, mobile `pnpm --filter tenderos-mobile test` (Jest, `jest-expo`), types `pnpm check-types` (turbo). Root `pnpm test` currently only runs the `test:auth` targets.
+
+## Specs
+
+### S1 — Scope: stores and customers only
+
+- User wording: “solo será el alncance de savanhi en tienda y usuario ya no vamos a meter por ahora marcas ni empresas ni terceros solo será tienda y usuarios”
+- The MVP covers exactly two actors: the store (`tendero`) and the customer (`client`).
+- No brand, company, or third-party actor is introduced, exposed, or extended in this feature.
+- Acceptance: no new brand/company/third-party endpoint, contract, table, or UI exists after this feature; the global product catalog (`catalog_products`, `catalog_brands`) stays as internal catalog metadata and is not an actor surface.
+
+### S2 — Customer app boundary
+
+- User wording: “App propia del cliente” / “App separada pero eso se trabaja despues” / “Backend completo ahora (Recomendado)”
+- The customer gets its own separate app, built later. Customer mobile UI is OUT of this feature.
+- Customer backend routes are IN this feature and authorize role `client`.
+- Acceptance: every customer-facing capability (S7, S8) ships as an HTTP endpoint guarded by `requireRole(["client"])`; no customer screen, tab, or route is added to `apps/Tenderos/mobile`; customer endpoints are exercised by backend tests only.
+
+### S3 — Redemption direction: customer shows the QR
+
+- User wording: “Cliente muestra QR” and (L6) “Sí, expo-camera (Recomendado)”
+- The customer displays a QR for a claimed coupon; the tendero scans and validates it in the tendero app.
+- The scanner dependency is authorized: `expo-camera` is added to `apps/Tenderos/mobile` for this feature. No other camera/scanner dependency is introduced.
+- Acceptance: the claim response exposes a QR payload/token for the customer; the tendero app has a scanner built on `expo-camera` that submits the scanned token; `expo-camera` appears in `apps/Tenderos/mobile/package.json` with its camera permission declared for both platforms; no customer-side scanning exists.
+
+### S4 — Coupon types
+
+- User wording: “Texto libre, 2x1 / combo, % de descuento, Monto fijo” and (L6) “Un solo tipo (Recomendado)”
+- Four coupon types: free text, `2x1 / combo`, percentage discount, fixed amount.
+- A coupon carries exactly ONE type. Types are not combinable: there is no coupon that is both a percentage discount and a 2x1, and no list-valued type field.
+- `2x1` and `combo` are the same type value, not two types; which one a coupon behaves as is decided by its product count in S5, so the closed set stays at four.
+- Acceptance: the coupon type is a single scalar field over a closed set of exactly those four values, validated in contracts and constrained in the database; a payload sending more than one type, an array of types, or an unknown value is rejected and nothing is persisted; percentage and fixed-amount types carry their value, free text carries its text.
+
+### S5 — Product link is always required
+
+- User wording: “Siempre a un producto” and (L6) “Sí, combo con varios”
+- Every coupon references product(s) from that store's catalog, and never zero products.
+- Free text, percentage discount, and fixed amount link exactly one store product. A `2x1 / combo` coupon links one product (it is then a 2x1) or two or more products of the same store (it is then a combo).
+- Acceptance: a coupon cannot be created or saved without at least one product reference belonging to the owning store; a free-text, percentage, or fixed-amount coupon sent with two or more products is rejected; a `2x1 / combo` coupon accepts one product and accepts two or more products, all of which must belong to the owning store; a reference to a product of another store is rejected and nothing is persisted, including when only one product of a multi-product combo is foreign; duplicate references to the same product on one coupon are rejected; the referenced product source (store catalog assignment or store-private product) stays distinguishable, as both are already separate models in the code.
+
+### S6 — Coupon rules
+
+- User wording: “Vigencia (desde/hasta), Stock total, Pausar / activar”, “Una vez por cliente (Recomendado)” and (L6) “Pausa respeta, vence no (Recomendado)”
+- Each coupon has a validity window (from/to), a total stock, and a paused/active state. Each customer may claim and redeem a given coupon only once.
+- Pausing affects only NEW claims. A coupon already claimed by a customer stays redeemable while the coupon is paused, up to and including the validity end date.
+- The validity end date is the hard limit. After it, a claim can no longer be redeemed, whether the coupon is paused or active.
+- Acceptance: validity is stored and validated as a date range with `from <= to` (date granularity per S11); total stock is a nonnegative integer; pausing a coupon rejects new claims without destroying or invalidating existing claims; activating restores claimability; redeeming an existing claim on a paused coupon succeeds while the current date is within the validity window; redeeming any claim after the validity end date is rejected for both paused and active coupons and leaves the claim unredeemed; a second claim by the same customer for the same coupon is rejected and leaves stock and claim counters unchanged; a claim outside the validity window or on an exhausted coupon is rejected the same way.
+
+### S7 — Discovery (customer backend)
+
+- User wording: “Mapa / tiendas cercanas, Lista/feed de cupones, Seguir tiendas” and (L6) “Cercanía + radio fijo de 3km además las tiendas seguidas tambien en el federal con un badge o algo que diga señiguiendo, todos comparten una sola pantalla”
+- There is ONE feed: coupons from stores within a fixed 3 km radius of the customer, ordered by proximity (nearest store first).
+- Coupons from stores the customer follows appear in that same feed too, including when the store is farther than 3 km. Each feed item carries a followed flag so the UI can show a “Siguiendo” badge.
+- No separate followed-stores feed, section, tab, or screen exists; followed and nearby coupons share one endpoint and one screen. Map / nearby stores stays as its own capability.
+- Acceptance: a nearby-stores endpoint takes the customer's coordinates and returns active stores with their coordinates (the `stores` table already holds `latitude`/`longitude`); a single coupon-feed endpoint takes the customer's coordinates and returns currently claimable coupons (active, not paused, within validity, stock remaining) from stores within 3 km, sorted ascending by distance; coupons from followed stores beyond 3 km are included in the same response; every feed item exposes a boolean followed flag that is true exactly when the authenticated customer follows the coupon's store; a coupon from a followed store inside the radius appears once, not twice; no second feed endpoint filtered by followed stores is added; follow and unfollow endpoints persist the customer↔store relation, are idempotent, and a store cannot be followed twice by the same customer.
+
+### S8 — Flow: claim first, redeem later
+
+- User wording: “Reclamar y luego canjear”
+- Claiming reserves stock; redemption happens later, in the store.
+- Acceptance: a successful claim decrements available stock at claim time and creates a claim in a pre-redemption state; redemption transitions that same claim to redeemed without decrementing stock again; concurrent claims cannot oversell the total stock; a rejected claim leaves stock unchanged.
+
+### S9 — Tendero metrics
+
+- User wording: “Reclamados vs canjeados, Seguidores de la tienda, Historial de canjes”
+- Acceptance: per-coupon claimed and redeemed counts, the store's follower count, and a redemption history list are available to the owning tendero; every metric is scoped to stores owned by the authenticated tendero; a tendero cannot read another store's metrics.
+
+### S10 — Images on Garage
+
+- User wording: “Usemos garage docker para las imagenes”
+- Store and coupon images are stored in Garage (S3-compatible) running in Docker.
+- Acceptance: `docker-compose.yml` gains a Garage service with its own volume and health gating consistent with the existing `postgres` service; the backend exposes an authenticated image-upload path for a tendero's own store/coupon images and persists the resulting object reference; the tendero onboarding photo step, which today keeps photo URIs only in the local onboarding draft (`savePhotos` in `AuthProvider.tsx`) and never uploads them, is wired to that path so photos survive reinstall.
+- Implementation note (technical, not a product decision): `createBackendApp` installs `express.json({ limit: "100kb" })`, so raw image bytes must not travel through the JSON body parser. Prefer presigned PUT URLs issued by the backend, with the client uploading directly to Garage.
+
+### S11 — Display rule: no IDs, no times
+
+- User wording: “el tendero y usuarios nunca ven ID, ni horas ni minutos, solo fechas y dias”
+- Applies to all user-facing UI and user-facing API display fields. Internal IDs may exist in API payloads but are never rendered. Dates are shown as date/day only; coupon validity is date-granular.
+- Acceptance: no screen renders a UUID or any internal identifier; every user-facing date is rendered through one shared date-only formatting helper that never emits hours, minutes, or seconds; the existing Spanish UI copy convention of `apps/Tenderos/mobile` is preserved (this document is English; product copy stays Spanish).
+
+### S12 — Decision (orchestrator, user delegated: “Elige la mejor opcion”)
+
+- Remove brands repository/types/`marca` role usage and the `products.brandId` dead path; freeze orders and deliveries (unmount routes, hide Orders tab, keep repositories in code for later).
+- Acceptance (brands): `createBrandsRepository`, `mapBrand`, the `brands` entry of `BackendRepositories`, the `Brand`/`BrandRequest` contracts, the `brands` re-exports in `packages/backend-core/src/index.ts`, and the `marca` entry seeded/used by application code stop being used; `products.brandId` (which points at the standalone `brands` table, not at `catalog_brands`) is removed from the application read/write paths.
+- Acceptance (data safety, `ask-on-risk`): removal is code-only. This task performs NO destructive migration. The user decided in L6 (“No no la borres sorry”) NOT to drop the `brands` table, the `products.brand_id` column, or the `marca` row in `roles`; those database objects stay, so no row is destroyed and no foreign key breaks. No migration in this feature may issue `DROP TABLE brands`, `ALTER TABLE products DROP COLUMN brand_id`, or a delete of the `marca` role row.
+- Acceptance (orders/deliveries freeze): `GET /api/v1/tenderos/orders` and `PATCH /api/v1/tenderos/orders/:id/status` are unmounted from `createApiRouter`; the Orders tab is removed from `app/(tabs)/_layout.tsx`; `orders.repository.ts`, `deliveries.repository.ts`, their contracts, and their tables remain in the code for later; `catalog_brands`/`catalog_products.brandId` are untouched because the global catalog depends on them.
+
+## Tasks
+
+- T1 — S1, S12 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — done — commit `-` (hash reported to the parent; the doc line is part of the same commit and amending is not allowed)
+  - RED (`pnpm exec tsx --test src/routes/routes-freeze.test.ts` in `apps/Tenderos/backend`): `the orders routes are unmounted` failed with `AssertionError ... 401 !== 404` (both order routes were still mounted) and `a store product payload no longer carries a brand reference` failed with `true !== false` (`storeProductCreateSchema` still accepted `brandId`). 5 tests, 2 passed, 3 failed; the two PRESERVE cases (`the tendero status route still answers`, `the product routes stay mounted behind authentication`) already passed on the base.
+  - GREEN (same command): 5 tests, 5 passed, 0 failed.
+  - No migration was generated. The `brands` table, `products.brand_id`, and the `marca` role row stay in the database; the Drizzle definitions of `brands` and `products.brandId` are retained and marked frozen/DB-only so drizzle-kit never emits a drop. `catalog_brands`/`catalog_products.brandId` untouched.
+  - Correction (see L8): `marca` is RETAINED in `AUTH_ROLES`. An earlier pass removed it, which would have let `normalizeRole(row.roleName, "tendero")` remap a stored `marca` user to `tendero` — a privilege widening. The role stays a known value with no route granting it; only the seeding stopped.
+  - Correction RED (`pnpm exec tsx --test --test-concurrency=1 src/roles/roles-contract.test.ts` in `packages/backend-core`): `a stored marca role is never remapped to tendero` failed with `AssertionError ... 'tendero' !== 'marca'` from `mapProfile`. 3 tests, 2 passed, 1 failed.
+  - Correction GREEN (same command): 3 tests, 3 passed, 0 failed. The suite is reached by the package's existing `src/**/*.test.ts` glob, so `pnpm --filter @repo/backend-core test` went from 20 to 23 tests and from 12 to 15 passing, with the same 8 pre-existing DB failures.
+  - `apps/Tenderos/backend/package.json` gained `"test": "tsx --test --test-concurrency=1 src/**/*.test.ts"`, so `routes-freeze.test.ts` now runs under `pnpm --filter tenderos-backend test` (5 tests, 5 passed) instead of only by hand.
+- T2 — S10, S11 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — pending — commit `-`
+- T3 — S4, S5, S6 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — pending — commit `-`
+- T4 — S4, S5, S6, S11 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — pending — commit `-`
+- T5 — S2, S6, S7, S8 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — pending — commit `-`
+- T6 — S3, S6, S8 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — pending — commit `-`
+- T7 — S9 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — pending — commit `-`
+- T8 — S4, S5, S6, S11 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — pending — commit `-`
+- T9 — S3, S6 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — pending — commit `-`
+- T10 — S9, S11 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — pending — commit `-`
+- T11 — S11 — delegated (route evidence: “user mandate: parent only delegates, Opus 5 subagents”) — pending — commit `-`
+
+### Task scope and line forecast
+
+Forecast counts authored changed lines (generated Drizzle SQL excluded). Each backend task includes its own tests.
+
+- T1 — Scope cleanup. Remove the brands repository/mapper/contracts/re-exports and `marca` application usage, drop `products.brandId` from read/write paths, unmount the two order routes from `createApiRouter`, remove the Orders tab from `app/(tabs)/_layout.tsx` (the `orders.tsx` stub screen becomes unreachable). No destructive migration. ~120 lines.
+- T2 — Garage service in `docker-compose.yml`, backend Garage/S3 config in env, authenticated image-upload (presigned PUT) endpoint plus its tests, and store-photos wiring from the onboarding draft to the upload path. ~380 lines.
+- T3 — Coupons schema (coupon, coupon↔product link, claim, store-follow tables with single-value type, stock, validity and paused constraints; the coupon↔product link holds many rows per coupon so a `2x1 / combo` coupon can reference two or more products, with a uniqueness constraint per coupon+product), generated migration, `@repo/api-contracts/coupons` contracts, contract tests. No destructive statement touches `brands`, `products.brand_id`, or the `marca` role row (S12). ~380 lines.
+- T4 — Tendero coupon CRUD endpoints: create/list/update with single type, per-type product cardinality (one product for free text/percentage/fixed amount, one or more for `2x1 / combo`), validity, stock, pause/activate; owner scoping; tests. ~450 lines.
+- T5 — Customer endpoints: nearby stores, the single coupon feed (3 km radius, proximity ordering, followed-store coupons merged in with a followed flag and no duplicates), follow/unfollow, claim with once-per-customer plus stock reservation, QR token issuance for the claimed coupon; tests. ~520 lines.
+- T6 — Tendero redeem endpoint: accept a scanned QR token, validate ownership and state, allow redemption of an existing claim while the coupon is paused, reject redemption after the validity end date for paused and active coupons alike, mark redeemed exactly once; tests. ~250 lines.
+- T7 — Tendero metrics endpoints: claimed vs redeemed per coupon, store followers, redemption history; owner scoping; tests. ~260 lines.
+- T8 — Tendero mobile UI: coupon list, create, edit, pause/activate, wired to T4. ~520 lines (expected to need its own slicing or a `size:exception`, as `ProductsWorkspace.tsx` already does at 715 lines).
+- T9 — Tendero mobile UI: QR scanner screen built on `expo-camera` (dependency and camera permissions added to `apps/Tenderos/mobile`) that submits to the T6 redeem endpoint, with success/error states. ~320 lines.
+- T10 — Tendero Home tab replacing today's hardcoded `topProducts`/`importantAlerts` mock data with real T7 metrics and redemption history. ~280 lines.
+- T11 — Cross-cutting S11 enforcement: one shared date-only formatting helper plus tests, and removal of any identifier rendering from the touched screens. ~140 lines.
+
+Total forecast: ~3,620 authored changed lines.
+
+## Log
+
+- L1 — User request verbatim: “Hola, mira te explico la situación. Tienes dos carpeta independientes, una de SavanhiDocs y otro de SavahiApp. Actualmente estoy trabajando en la aplicación de tenderos, Actualmente tengo trabajado lo que es el backend y el frontend pero me he estado dando cuenta como estando con gente experimentada y me dicen que estoy construyendo una aplicación bastante grande desde el inicio cuando lo que debería hacer es conseguir datos y para eso lo quiero simplificar en la primera versión como una cuponera vamos a seguir trabajando en la aplicación de tenderos la parte de que ahora registra sus productos crea cupones y muhcisimos mas, solo será el alncance de savanhi en tienda y usuario ya no vamos a meter por ahora marcas ni empresas ni terceros solo será tienda y usuarios y si tienes dudas pregúntame para lograr un mvp completo de tenderos no no quiero que lo deduzcas por mas que tengas Savanhi-Docs, ademas tú solo delega no toques código no te en susis las manos”
+- L2 — 2026-11-03 user decisions (answers verbatim):
+  - Scope: “solo será el alncance de savanhi en tienda y usuario ya no vamos a meter por ahora marcas ni empresas ni terceros solo será tienda y usuarios”
+  - Customer app: “App propia del cliente”; “App separada pero eso se trabaja despues”; “Backend completo ahora (Recomendado)”
+  - Redemption: “Cliente muestra QR”
+  - Coupon types: “Texto libre, 2x1 / combo, % de descuento, Monto fijo”
+  - Product link: “Siempre a un producto”
+  - Rules: “Vigencia (desde/hasta), Stock total, Pausar / activar”; “Una vez por cliente (Recomendado)”
+  - Discovery: “Mapa / tiendas cercanas, Lista/feed de cupones, Seguir tiendas”
+  - Flow: “Reclamar y luego canjear”
+  - Metrics: “Reclamados vs canjeados, Seguidores de la tienda, Historial de canjes”
+  - Images: “Usemos garage docker para las imagenes”
+  - Delegated choices: “Elige la mejor opcion”
+- L3 — 2026-11-03 user: “Si hagamolo, hagamos ODD y ademas el tendero y usuarios nunca ven ID, ni horas ni minutos, solo fechas y dias, vamos”
+- L4 — 2026-11-03 inventory evidence. Current state of `Savanhi-App`: no coupon code, table, contract, or UI exists anywhere (the only “cupón” mentions are in `README.md` business text); only the Tenderos app exists (`apps/Tenderos/{backend,mobile}`, `apps/Tenderos/share` holds just a README); auth with email OTP is complete and tested (`packages/backend-core/src/auth/*`, mobile `features/auth`); catalog and products are complete end to end (global catalog, store catalog assignments, store-private products, store categories, `ProductsWorkspace.tsx`); orders are partial (two tendero routes plus `orders.repository.ts`, and the Orders tab is already a “Pedidos aún no está disponible” stub); deliveries and brands are stubs (repositories with no routes); roles are `admin|marca|client|tendero|delivery` in `AUTH_ROLES` with only `tendero` actually used (`defaultRegistrationRole: "tendero"`, every route guarded by `requireRole(["tendero"])`); there is no object storage, no S3/Garage/MinIO config, and no upload endpoint, so onboarding store photos never leave the device; there is no QR or barcode scanner (`expo-image-picker` and `@rnmapbox/maps` are present, no camera-scanner dependency); the Home tab renders hardcoded mock metrics; six Drizzle migrations exist (`0000`–`0006`); `codegraph_explore` could not resolve an index for this repository, so this inventory came from direct reads and greps. Next step: “User reviews plan before implementation”.
+- L5 — 2026-11-03 open questions for the user, recorded unanswered and not decided here. All six were answered by the user in L6; they are kept here as history and marked RESOLVED BY L6:
+  - RESOLVED BY L6 — A new coupon scanner needs a camera-scanner dependency (for example `expo-camera`); adding a dependency to `apps/Tenderos/mobile` is a change this plan does not authorize by itself.
+  - RESOLVED BY L6 — Dropping the `brands` table, the `products.brand_id` column, and the `marca` role row is deferred (S12). Whether and when to run that destructive migration is the user's call.
+  - RESOLVED BY L6 — S4 does not say whether the four coupon types may be combined on one coupon, nor what the “2x1 / combo” type needs beyond the product link (for example a required second product or quantity).
+  - RESOLVED BY L6 — S5 says “Siempre a un producto” (singular) while the MVP also has a combo type; whether a combo coupon may link more than one product is unresolved.
+  - RESOLVED BY L6 — S7 does not define the nearby-stores radius, the feed ordering, or whether the feed is filtered by followed stores.
+  - RESOLVED BY L6 — S6 does not say what happens to already claimed, unredeemed coupons when a coupon's validity window ends or when the tendero pauses it.
+- L6 — 2026-11-03 user answers to the L5 open questions (answers verbatim), closing all six:
+  - Combo with several products → “Sí, combo con varios” (resolves S5: a `2x1 / combo` coupon may link two or more products of the same store).
+  - Claimed coupon that is later paused or expires → “Pausa respeta, vence no (Recomendado)” (resolves S6: pausing only blocks new claims and existing claims stay redeemable; after the validity end date no claim can be redeemed).
+  - Feed → “Cercanía + radio fijo de 3km además las tiendas seguidas tambien en el federal con un badge o algo que diga señiguiendo, todos comparten una sola pantalla” (resolves S7: fixed 3 km radius ordered by proximity, followed stores merged into the same single feed with a “Siguiendo” badge driven by a followed flag, one shared screen).
+  - Scanner dependency → “Sí, expo-camera (Recomendado)” (resolves S3/T9: `expo-camera` is authorized for `apps/Tenderos/mobile`).
+  - Combinable coupon types → “Un solo tipo (Recomendado)” (resolves S4: exactly one type per coupon, closed set of four, not combinable).
+  - Dropping the brand objects in the database → the user first answered “Sí, borrar ahora” and then corrected it to “No no la borres sorry”. The correction is the decision: NO destructive migration; the `brands` table, the `products.brand_id` column, and the `marca` role row stay in the database (S12). The earlier answer is recorded only as history and must not be acted on.
+- L7 — 2026-11-03 user: followed-store coupons beyond 3 km → “Sí, siempre aparecen (Recomendado)” (confirms S7 reading).
+- L8 — 2026-11-03 T1 correction evidence. Removing `marca` from `AUTH_ROLES` was wrong and has been reverted: `mapProfile` calls `normalizeRole(row.roleName, "tendero")`, so an unknown stored role falls back to `tendero`, and dropping `marca` from the known set would have promoted any existing `marca` user to `tendero` instead of rejecting it. `marca` is retained in `AUTH_ROLES` with a comment recording that it is frozen and granted by no route (S12), and `packages/backend-core/src/roles/roles-contract.test.ts` now pins the behavior through `mapProfile` (RED: `'tendero' !== 'marca'`; GREEN: 3/3). The seed change stands — `marca` is no longer seeded, and because the insert is conflict-tolerant and never deletes, no existing row was touched. S12's “stop being used” is therefore satisfied by removing the grants and the seeding, not by narrowing the stored-role vocabulary.

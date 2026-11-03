@@ -2,16 +2,9 @@ import type { AuthUser } from "@repo/api-contracts/auth";
 import type { Delivery } from "@repo/api-contracts/deliveries";
 import type { Order } from "@repo/api-contracts/orders";
 import type { Product, Store } from "@repo/api-contracts/products";
-import type { AdminUser, Brand } from "@repo/api-contracts/users";
+import type { AdminUser } from "@repo/api-contracts/users";
 import { normalizeRole } from "../roles.js";
-import {
-  brands,
-  deliveries,
-  orders,
-  products,
-  stores,
-  users,
-} from "./schema.js";
+import { deliveries, orders, products, stores, users } from "./schema.js";
 
 type UserRow = typeof users.$inferSelect & { roleName: string };
 
@@ -29,15 +22,6 @@ export function mapProfile(row: UserRow): AuthUser {
 export function mapAdminUser(row: UserRow): AdminUser {
   return {
     ...mapProfile(row),
-    createdAt: row.createdAt?.toISOString() ?? null,
-  };
-}
-export function mapBrand(row: typeof brands.$inferSelect): Brand {
-  return {
-    id: row.id,
-    name: row.name,
-    ownerProfileId: row.ownerUserId,
-    active: row.active,
     createdAt: row.createdAt?.toISOString() ?? null,
   };
 }
@@ -61,7 +45,6 @@ export function mapProduct(row: typeof products.$inferSelect): Product {
   return {
     id: row.id,
     storeId: row.storeId,
-    brandId: row.brandId,
     name: row.name,
     description: row.description,
     price: Number(row.price),

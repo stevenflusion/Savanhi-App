@@ -1,3 +1,6 @@
+// `marca` is retained so stored roles are never remapped: `normalizeRole`
+// falls back to `tendero`, so dropping it would promote an existing marca user.
+// It is frozen and out of MVP scope per S12 — no route grants it.
 export const AUTH_ROLES = [
   "admin",
   "marca",

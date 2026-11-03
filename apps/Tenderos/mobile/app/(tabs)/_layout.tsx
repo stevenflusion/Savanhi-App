@@ -33,12 +33,9 @@ export default function TabsLayout() {
           title: "Productos",
         }}
       />
-      <Tabs.Screen
-        name="orders"
-        options={{
-          title: "Pedidos",
-        }}
-      />
+      {/* Orders are frozen for the cuponera MVP: the route file stays, the
+          tab is hidden. `href: null` keeps it out of the tab bar. */}
+      <Tabs.Screen name="orders" options={{ href: null }} />
       <Tabs.Screen
         name="profile"
         options={{

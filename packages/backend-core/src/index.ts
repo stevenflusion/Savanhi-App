@@ -7,7 +7,6 @@ export type { BackendContext, BackendRepositories } from "./context/backend-cont
 export { createDatabaseConnection } from "./database/connection.js";
 export type { DatabaseConnection } from "./database/connection.js";
 export { createAuthLogsRepository } from "./database/repositories/auth-logs.repository.js";
-export { createBrandsRepository } from "./database/repositories/brands.repository.js";
 export { createCatalogRepository } from "./database/repositories/catalog.repository.js";
 export { createDeliveriesRepository } from "./database/repositories/deliveries.repository.js";
 export { createOrdersRepository } from "./database/repositories/orders.repository.js";
@@ -30,5 +29,5 @@ export { validateBody, validateParams, validateQuery } from "./middleware/valida
 export { createMemoryRateLimiter, rateLimit } from "./middleware/rate-limit.js";
 export type { RateLimiter } from "./middleware/rate-limit.js";
 export { AUTH_ROLES, isAuthRole, normalizeRole } from "./roles.js";
-export { mapAdminUser, mapBrand, mapDelivery, mapOrder, mapProduct, mapProfile, mapStore } from "./database/mappers.js";
+export { mapAdminUser, mapDelivery, mapOrder, mapProduct, mapProfile, mapStore } from "./database/mappers.js";
 export type { BackendEnv } from "./types/env.js";

@@ -193,6 +193,12 @@ export const login = pgTable("login", {
     .defaultNow()
     .notNull(),
 });
+/**
+ * Frozen, database-only table. The application no longer reads or writes it,
+ * but the definition is retained so drizzle-kit never generates a drop for the
+ * existing table and its rows. Not to be confused with `catalogBrands`, which
+ * the global product catalog depends on.
+ */
 export const brands = pgTable("brands", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
@@ -225,6 +231,8 @@ export const products = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     storeId: uuid("store_id").references(() => stores.id),
+    // Frozen, database-only column kept out of every application read and
+    // write path; retained so drizzle-kit never generates a drop for it.
     brandId: uuid("brand_id").references(() => brands.id),
     name: text("name").notNull(),
     description: text("description"),

@@ -100,7 +100,6 @@ export function createProductsRepository(db: DatabaseConnection) {
         .insert(products)
         .values({
           storeId,
-          brandId: payload.brandId ?? null,
           name: payload.name,
           description: payload.description ?? null,
           price: String(payload.price),
@@ -153,7 +152,6 @@ export function createProductsRepository(db: DatabaseConnection) {
         .update(products)
         .set({
           storeId: payload.storeId === undefined ? undefined : payload.storeId,
-          brandId: payload.brandId,
           name: payload.name,
           description: payload.description,
           price:

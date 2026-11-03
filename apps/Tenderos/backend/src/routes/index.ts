@@ -6,7 +6,6 @@ import {
   storeProductCreateSchema,
   storeProductUpdateSchema,
 } from "@repo/api-contracts/catalog";
-import { ORDER_STATUSES } from "@repo/api-contracts/orders";
 import {
   AppError,
   type BackendContext,
@@ -35,9 +34,6 @@ const productSchema = storeProductCreateSchema.extend({
 const productUpdateSchema = storeProductUpdateSchema.extend({
   storeId: z.string().uuid().nullable().optional(),
 });
-const orderStatusSchema = z.object({
-  status: z.enum(ORDER_STATUSES),
-});
 
 type RequireRole = (roles: AuthRole[]) => RequestHandler;
 
@@ -49,7 +45,7 @@ export function createApiRouter({
   requireRole: RequireRole;
 }): ExpressRouter {
   const router = Router();
-  const { catalog, orders, products, stores } = context.repositories;
+  const { catalog, products, stores } = context.repositories;
 
   router.get("/api/v1/tenderos/status", (_req, res) => {
     res.status(200).json({
@@ -346,39 +342,9 @@ export function createApiRouter({
     },
   );
 
-  router.get(
-    "/api/v1/tenderos/orders",
-    requireRole(["tendero"]),
-    async (req, res, next) => {
-      try {
-        const storeIds = await stores.listIdsByOwner(req.auth?.user.id ?? "");
-        const data = await orders.listByStoreIds(storeIds);
-        res.status(200).json({ data });
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  router.patch(
-    "/api/v1/tenderos/orders/:id/status",
-    requireRole(["tendero"]),
-    validateParams(idParamsSchema),
-    validateBody(orderStatusSchema),
-    async (req, res, next) => {
-      try {
-        const storeIds = await stores.listIdsByOwner(req.auth?.user.id ?? "");
-        const data = await orders.updateStatusForStores(
-          String(req.params.id),
-          storeIds,
-          req.body.status,
-        );
-        res.status(200).json({ data });
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
+  // Orders are frozen for the cuponera MVP: no order route is mounted, so
+  // every order path answers 404. `orders.repository.ts` and the order
+  // contracts stay in place for when the capability is resumed.
 
   return router;
 }

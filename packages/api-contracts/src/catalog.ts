@@ -56,7 +56,6 @@ export const catalogStoreProductUpdateSchema = z
 const customProductFields = {
   name: z.string().trim().min(1),
   description: z.string().nullable().optional(),
-  brandId: z.uuid().nullable().optional(),
   categoryId: z.uuid().nullable().optional(),
   price: catalogPriceSchema,
   stock: catalogStockSchema.default(1),

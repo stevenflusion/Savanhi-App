@@ -17,6 +17,11 @@ const tabDetails: Record<
   profile: { label: "Perfil", icon: "person-outline" },
 };
 
+// Orders are frozen for the cuponera MVP. Expo Router's `href: null` only
+// hides a route from the default tab bar, so this custom bar keeps its own
+// list of the tabs it renders.
+const visibleTabs: TabName[] = ["index", "products", "profile"];
+
 export function useNavBarScreenOptions() {
   const insets = useSafeAreaInsets();
 
@@ -51,6 +56,9 @@ export function FloatingTabBar({ state, navigation }: FloatingTabBarProps) {
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [indicatorWidth, setIndicatorWidth] = useState(0);
   const activeTab = state.routes[state.index]?.name as TabName | undefined;
+  const routes = state.routes.filter((route) =>
+    visibleTabs.includes(route.name as TabName),
+  );
 
   useEffect(() => {
     if (!activeTab) return;
@@ -115,9 +123,9 @@ export function FloatingTabBar({ state, navigation }: FloatingTabBarProps) {
             transform: [{ translateX: indicatorX }],
           }}
         />
-        {state.routes.slice(0, 2).map((route, index) => {
+        {routes.slice(0, 2).map((route) => {
           const details = tabDetails[route.name as TabName];
-          const focused = state.index === index;
+          const focused = activeTab === route.name;
           return (
             <NavItem
               key={route.key}
@@ -173,9 +181,9 @@ export function FloatingTabBar({ state, navigation }: FloatingTabBarProps) {
           <Ionicons name="add" size={29} color="#ffffff" />
         </Pressable>
 
-        {state.routes.slice(2).map((route, index) => {
+        {routes.slice(2).map((route) => {
           const details = tabDetails[route.name as TabName];
-          const focused = state.index === index + 2;
+          const focused = activeTab === route.name;
           return (
             <NavItem
               key={route.key}

@@ -12,17 +12,3 @@ export type AdminUser = {
   active: boolean;
   createdAt: string | null;
 };
-
-export type Brand = {
-  id: string;
-  name: string;
-  ownerProfileId: string | null;
-  active: boolean;
-  createdAt: string | null;
-};
-
-export type BrandRequest = {
-  name: string;
-  ownerProfileId?: string | null;
-  active?: boolean;
-};

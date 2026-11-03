@@ -17,10 +17,13 @@ const source = "Supermaxi Quito";
 const referenceNote =
   "Initial Supermaxi Quito reference snapshot; price is not definitive.";
 
+// The `marca` role is no longer seeded. The insert is conflict-tolerant and
+// never deletes, so an existing `marca` row stays untouched in databases that
+// already have it.
 await db
   .insert(roles)
   .values(
-    ["admin", "marca", "client", "tendero", "delivery"].map((name) => ({
+    ["admin", "client", "tendero", "delivery"].map((name) => ({
       name,
     })),
   )

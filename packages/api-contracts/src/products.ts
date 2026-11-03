@@ -30,7 +30,6 @@ export type StoreRequest = {
 export type Product = {
   id: string;
   storeId: string | null;
-  brandId: string | null;
   name: string;
   description: string | null;
   price: number;
@@ -41,7 +40,6 @@ export type Product = {
 
 export type ProductRequest = {
   storeId?: string | null;
-  brandId?: string | null;
   name: string;
   description?: string | null;
   price: number;
