@@ -44,6 +44,13 @@ const SPANISH_BY_API_MESSAGE: Record<string, string> = {
   "The total stock cannot be lower than the number of claims already made.":
     "El stock total no puede ser menor que la cantidad de cupones ya reclamados.",
 
+  // S3/S6 — the scanner (T6 redemption routes). A token that matches nothing
+  // and a live token of another store's claim answer with the SAME message, so
+  // the Spanish wording must not promise the tendero which of the two it was.
+  "No claim matches this QR code.": "Este código no es de un cupón de tu tienda.",
+  "This coupon has already been redeemed.": "Este cupón ya fue canjeado.",
+  "This coupon is no longer valid.": "Este cupón ya venció.",
+
   // S10 — the coupon photo.
   "This image is already used by another coupon.":
     "Esa imagen ya está usada por otro cupón.",

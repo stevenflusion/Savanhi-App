@@ -25,6 +25,18 @@ module.exports = {
       ],
       "expo-router",
       "expo-font",
+      // The coupon scanner (S3, authorized in L6). The permission text is the
+      // sentence the tendero reads in the system dialog, so it is Spanish like
+      // the rest of the app's copy, and audio is never requested: this camera
+      // reads QR codes and records nothing.
+      [
+        "expo-camera",
+        {
+          cameraPermission:
+            "Savanhi usa la cámara para leer el código QR del cupón de tu cliente.",
+          recordAudioAndroid: false,
+        },
+      ],
     ],
     updates: {
       enabled: false,
@@ -40,6 +52,19 @@ module.exports = {
       adaptiveIcon: {
         foregroundImage: "./assets/images/logo.png",
         backgroundColor: "#ffffff",
+      },
+      // Declared here as well as by the plugin, so the camera permission is
+      // readable in the app config itself and not only in a generated
+      // manifest (S3).
+      permissions: ["android.permission.CAMERA"],
+    },
+    // The same declaration for the other platform. The app ships Android today
+    // (`platforms` above), and the usage description travels with the config so
+    // an iOS build never lands without it.
+    ios: {
+      infoPlist: {
+        NSCameraUsageDescription:
+          "Savanhi usa la cámara para leer el código QR del cupón de tu cliente.",
       },
     },
   },
