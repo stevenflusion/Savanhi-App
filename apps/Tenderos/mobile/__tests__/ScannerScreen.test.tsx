@@ -20,6 +20,11 @@ jest.mock("@/src/features/auth", () => ({
   useAuth: () => ({ requestAuthenticated: mockRequestAuthenticated }),
 }));
 
+const mockBack = jest.fn();
+jest.mock("expo-router", () => ({
+  useRouter: () => ({ back: mockBack, push: jest.fn() }),
+}));
+
 const mockRequestPermission = jest.fn();
 const mockPermission: { value: unknown } = { value: null };
 const mockCamera: { props: Record<string, any> | null } = { props: null };
@@ -153,9 +158,65 @@ async function scan(token = QR_TOKEN) {
 beforeEach(() => {
   mockRequestAuthenticated.mockReset();
   mockRequestPermission.mockReset();
+  mockBack.mockReset();
   mockCamera.props = null;
   mockPermission.value = granted;
   route();
+});
+
+/**
+ * The permission can be granted and the camera still fail to open — another
+ * app holding the device, a hardware fault, an emulator with no camera. The
+ * viewfinder is then a black rectangle that never scans anything, so the
+ * screen has to say so and let the tendero out.
+ */
+describe("ScannerScreen camera mount failure", () => {
+  it("shows a Spanish error and a way back when the camera cannot start", async () => {
+    const screen = render(<ScannerScreen />);
+
+    await act(async () => {
+      mockCamera.props?.onMountError?.({
+        message: "Camera could not be started",
+      });
+    });
+
+    expect(screen.getByText("No pudimos abrir la cámara")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Cierra las otras apps que estén usando la cámara y vuelve a intentarlo.",
+      ),
+    ).toBeTruthy();
+
+    fireEvent.press(screen.getByText("Volver"));
+    expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes the dead viewfinder off the screen", async () => {
+    const screen = render(<ScannerScreen />);
+
+    await act(async () => {
+      mockCamera.props?.onMountError?.({
+        message: "Camera could not be started",
+      });
+    });
+
+    expect(screen.queryByTestId("camera-view")).toBeNull();
+    expect(screen.queryByText("Apunta al código QR del cliente")).toBeNull();
+  });
+
+  it("never renders the native failure in English", async () => {
+    const screen = render(<ScannerScreen />);
+
+    await act(async () => {
+      mockCamera.props?.onMountError?.({
+        message: "Camera could not be started",
+      });
+    });
+
+    expect(JSON.stringify(screen.toJSON())).not.toContain(
+      "Camera could not be started",
+    );
+  });
 });
 
 describe("ScannerScreen permission states", () => {

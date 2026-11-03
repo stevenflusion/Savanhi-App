@@ -3,7 +3,7 @@ import type { CouponRedemption } from "@repo/api-contracts";
 import { useEffect, useRef } from "react";
 import { Animated, Easing, Pressable, Text, View } from "react-native";
 
-import { formatDateOnly } from "@/src/lib/date-only";
+import { formatDateOnly, isDateOnly } from "@/src/lib/date-only";
 
 /**
  * Fixed confetti, not random: the screen looks the same on every redemption,
@@ -91,9 +91,16 @@ export function RedemptionSuccess({
       >
         {redemption.coupon.title}
       </Text>
-      <Text className="mt-1 text-center text-sm text-slate-500">
-        Canjeado el {formatDateOnly(redemption.redeemedOn)}
-      </Text>
+      {/*
+        `redeemedOn` is nullable in the contract — the preview answers null —
+        so the sentence is built only when there is a day to put in it. A
+        half-written "Canjeado el Sin fecha" tells the tendero nothing.
+      */}
+      {isDateOnly(redemption.redeemedOn) ? (
+        <Text className="mt-1 text-center text-sm text-slate-500">
+          Canjeado el {formatDateOnly(redemption.redeemedOn)}
+        </Text>
+      ) : null}
 
       <Pressable
         accessibilityRole="button"

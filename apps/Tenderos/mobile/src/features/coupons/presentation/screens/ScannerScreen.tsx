@@ -65,6 +65,7 @@ export function ScannerScreen() {
   );
 
   const [permission, requestPermission] = useCameraPermissions();
+  const [cameraFailed, setCameraFailed] = useState(false);
   const [torch, setTorch] = useState(false);
   const [phase, setPhase] = useState<Phase>("scanning");
   const [redemption, setRedemption] = useState<CouponRedemption | null>(null);
@@ -181,6 +182,45 @@ export function ScannerScreen() {
     );
   }
 
+  /**
+   * The permission can be granted and the camera still refuse to open —
+   * another app holding the device, a hardware fault, an emulator with no
+   * camera. The viewfinder would then be a black rectangle that never scans
+   * anything, so it comes off the screen and the tendero is told in Spanish
+   * and given the way out. The native message is deliberately not shown: it
+   * is English and names a module the tendero cannot act on.
+   */
+  if (cameraFailed) {
+    return (
+      <SafeAreaView className="flex-1 bg-orange-50">
+        <ScannerHeader onBack={goBack} />
+        <View className="flex-1 items-center justify-center gap-3 px-8">
+          <View className="h-20 w-20 items-center justify-center rounded-full bg-white shadow-sm">
+            <MaterialCommunityIcons
+              name="camera-off-outline"
+              size={36}
+              color="#1f2937"
+            />
+          </View>
+          <Text className="text-center text-base font-semibold text-slate-900">
+            No pudimos abrir la cámara
+          </Text>
+          <Text className="text-center text-sm text-slate-600">
+            Cierra las otras apps que estén usando la cámara y vuelve a
+            intentarlo.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={goBack}
+            className="mt-2 min-h-[52px] w-full max-w-sm items-center justify-center rounded-full bg-black px-5"
+          >
+            <Text className="text-base font-semibold text-white">Volver</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   const sheetVisible =
     phase === "preview" || phase === "redeeming" || phase === "failed";
 
@@ -192,6 +232,7 @@ export function ScannerScreen() {
         enableTorch={torch}
         barcodeScannerSettings={BARCODE_SETTINGS}
         onBarcodeScanned={handleBarcodeScanned}
+        onMountError={() => setCameraFailed(true)}
       />
 
       {sheetVisible ? (
