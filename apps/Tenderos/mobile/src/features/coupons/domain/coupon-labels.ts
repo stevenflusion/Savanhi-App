@@ -85,12 +85,54 @@ export function couponValueLabel(coupon: Coupon): string {
 }
 
 /**
+ * What is left of a coupon's stock, in the one wording the whole app uses.
+ * `remainingStock` is already derived by the backend from the reservation
+ * counter (S8), so nothing recomputes it here.
+ */
+export function couponRemainingLabel(remainingStock: number): string {
+  return remainingStock > 0 ? `${remainingStock} disponibles` : "agotado";
+}
+
+/**
  * The claim funnel of one coupon, in the two numbers the tendero acts on: how
- * many customers took it and how many are left. `remainingStock` is already
- * derived by the backend from the reservation counter (S8).
+ * many customers took it and how many are left.
  */
 export function couponStockLabel(coupon: Coupon): string {
-  const remaining =
-    coupon.remainingStock > 0 ? `${coupon.remainingStock} disponibles` : "agotado";
-  return `${coupon.claimedCount} reclamados · ${remaining}`;
+  return `${coupon.claimedCount} reclamados · ${couponRemainingLabel(coupon.remainingStock)}`;
+}
+
+/**
+ * The OTHER funnel, the one the metrics tab shows (S9): claimed against
+ * redeemed. An expired claim that was never redeemed still counts as claimed
+ * and never as redeemed, which is a product rule the backend already applies
+ * — this only words it.
+ *
+ * Both halves are pluralised, because the tendero reads `1 reclamado` far more
+ * often than the plural on a coupon that is just starting.
+ */
+export function couponFunnelLabel(
+  claimedCount: number,
+  redeemedCount: number,
+): string {
+  const claimed = claimedCount === 1 ? "reclamado" : "reclamados";
+  const redeemed = redeemedCount === 1 ? "canjeado" : "canjeados";
+  return `${claimedCount} ${claimed} · ${redeemedCount} ${redeemed}`;
+}
+
+/**
+ * How a customer with no profile is named. It is the app's wording and not the
+ * API's: T6 and T7 deliberately answer `customerName: null` for an
+ * OTP-registered user who never filled a name, and inventing one in the
+ * backend would put Spanish copy in an English contract.
+ *
+ * It lives here so the scanner sheet and the redemption history cannot call
+ * the same customer two different things.
+ */
+export const NAMELESS_CUSTOMER = "Cliente sin nombre";
+
+/** One line of the redemption history: who redeemed, and on which DAY (S11). */
+export function redemptionCustomerLabel(
+  customerName: string | null | undefined,
+): string {
+  return customerName?.trim() || NAMELESS_CUSTOMER;
 }

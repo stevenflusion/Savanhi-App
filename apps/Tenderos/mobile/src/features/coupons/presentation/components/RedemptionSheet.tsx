@@ -3,10 +3,11 @@ import type { CouponRedemption } from "@repo/api-contracts";
 import { Pressable, Text, View } from "react-native";
 
 import { categoryIconFor } from "../../domain/category-icons";
-import { couponTypeLabel, couponValueLabel } from "../../domain/coupon-labels";
-
-/** The customer may have no name at all until they complete a profile (T6). */
-const NAMELESS_CUSTOMER = "Cliente sin nombre";
+import {
+  couponTypeLabel,
+  couponValueLabel,
+  redemptionCustomerLabel,
+} from "../../domain/coupon-labels";
 
 /**
  * What the scan WOULD redeem, as the tendero reads it at the counter: the
@@ -29,7 +30,7 @@ export function RedemptionSheet({
   onCancel: () => void;
 }) {
   const { coupon } = redemption;
-  const customerName = redemption.customerName?.trim() || NAMELESS_CUSTOMER;
+  const customerName = redemptionCustomerLabel(redemption.customerName);
 
   return (
     <View className="gap-4">
