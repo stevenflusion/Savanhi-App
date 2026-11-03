@@ -234,19 +234,38 @@ export const storeFollowSchema = z.strictObject({ storeId: z.uuid() });
 export type StoreFollowRequest = z.infer<typeof storeFollowSchema>;
 
 /**
+ * The category a coupon's product belongs to, carried so the app can pick a
+ * per-category icon instead of a per-product image (S10): the MVP has no
+ * product images at all.
+ *
+ * `key` is the stable value to map an icon from — the catalog category's slug.
+ * A store-authored category has no slug (its name is free text the tendero
+ * typed), so `key` is null there and the app falls back to a default icon.
+ * `name` is for display; `id` is never rendered (S11).
+ */
+export type CouponProductCategory = {
+  id: string;
+  name: string;
+  key: string | null;
+};
+
+/**
  * A coupon's product reference as the clients see it: the reference itself plus
  * the data a list row needs, so the UI never has to fetch the catalog to render
  * a coupon. `name` is the store-private product's name or the catalog product's
  * commercial name, depending on the source.
  *
- * `imageUrl` is forward-compatible and always `null` today: neither
- * `catalog_products` nor `products` carries an image column, so there is no
- * product image to serve yet. The coupon's own `imageUrl` is what the UI
- * renders in the meantime.
+ * `category` is null as a whole when the product has none, rather than an id
+ * with a missing name. A store-private product resolves its store-authored
+ * category first and its catalog category second, matching what the products
+ * repository already reads (`storeCategoryId ?? categoryId`).
+ *
+ * There is NO product image field: the MVP renders the coupon's own photo, and
+ * this category icon when the coupon has no photo (S10).
  */
 export type CouponProductDetail = CouponProductRef & {
   name: string;
-  imageUrl: string | null;
+  category: CouponProductCategory | null;
 };
 
 /**

@@ -128,12 +128,11 @@ export function createApiRouter({
           record.imageObjectKey === null
             ? null
             : await storage.buildReadUrl(record.imageObjectKey),
+        // The reference drops only its grouping key: `name` and `category`
+        // are already what the screen renders (S10 — the app maps a
+        // per-category icon, there are no product images).
         products: (detailsByCoupon.get(record.id) ?? []).map(
-          ({ couponId: _couponId, ...detail }) => ({
-            ...detail,
-            // No product image exists in the schema yet; see CouponProductDetail.
-            imageUrl: null,
-          }),
+          ({ couponId: _couponId, ...detail }) => detail,
         ),
       })),
     );

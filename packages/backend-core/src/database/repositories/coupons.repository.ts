@@ -1,5 +1,6 @@
 import type {
   CouponCreateRequest,
+  CouponProductCategory,
   CouponProductRef,
   CouponUpdateRequest,
 } from "@repo/api-contracts";
@@ -12,11 +13,13 @@ import {
   type CouponRecord,
 } from "../mappers.js";
 import {
+  catalogCategories,
   catalogProducts,
   couponProducts,
   coupons,
   products,
   storeCatalogProducts,
+  storeProductCategories,
 } from "../schema.js";
 
 /** A transaction handle, so one write path can span several statements. */
@@ -113,6 +116,25 @@ async function mappingConstraints<T>(run: () => Promise<T>): Promise<T> {
 
 /** The pair, not the id alone, identifies a reference: the sources differ. */
 const refKey = (ref: CouponProductRef) => `${ref.source}:${ref.productId}`;
+
+/**
+ * A store-authored category name is free text the tendero typed, so it has no
+ * slug and therefore no stable icon key; a catalog category's slug IS that key.
+ * Both return null when the left join found no row, so the category is absent
+ * as a whole rather than an id with a missing name.
+ */
+const storeCategory = (
+  id: string | null,
+  name: string | null,
+): CouponProductCategory | null =>
+  id === null || name === null ? null : { id, name, key: null };
+
+const catalogCategory = (
+  id: string | null,
+  name: string | null,
+  slug: string | null,
+): CouponProductCategory | null =>
+  id === null || name === null ? null : { id, name, key: slug };
 
 export function createCouponsRepository(db: DatabaseConnection) {
   /**
@@ -367,8 +389,15 @@ export function createCouponsRepository(db: DatabaseConnection) {
 
     /**
      * The product references of several coupons at once, each with the name its
-     * source holds, so a coupon list renders in two queries instead of one per
-     * coupon.
+     * source holds and the category the app maps an icon from (S10), so a
+     * coupon list renders in two queries instead of one per coupon.
+     *
+     * A catalog product always has a catalog category (`category_id` is NOT
+     * NULL there), so its join is inner and its `key` is the slug. A
+     * store-private product may have a store-authored category, a catalog one,
+     * or neither, so both joins are left joins and the precedence is the one
+     * the products repository already applies (`storeCategoryId ??
+     * categoryId`).
      */
     async listProductDetailsByCouponIds(
       couponIds: string[],
@@ -380,6 +409,9 @@ export function createCouponsRepository(db: DatabaseConnection) {
             couponId: couponProducts.couponId,
             productId: storeCatalogProducts.id,
             name: catalogProducts.commercialName,
+            categoryId: catalogCategories.id,
+            categoryName: catalogCategories.name,
+            categorySlug: catalogCategories.slug,
           })
           .from(couponProducts)
           .innerJoin(
@@ -390,6 +422,10 @@ export function createCouponsRepository(db: DatabaseConnection) {
             catalogProducts,
             eq(storeCatalogProducts.productId, catalogProducts.id),
           )
+          .innerJoin(
+            catalogCategories,
+            eq(catalogProducts.categoryId, catalogCategories.id),
+          )
           .where(inArray(couponProducts.couponId, couponIds))
           .orderBy(asc(couponProducts.createdAt)),
         db
@@ -397,22 +433,53 @@ export function createCouponsRepository(db: DatabaseConnection) {
             couponId: couponProducts.couponId,
             productId: products.id,
             name: products.name,
+            storeCategoryId: storeProductCategories.id,
+            storeCategoryName: storeProductCategories.name,
+            categoryId: catalogCategories.id,
+            categoryName: catalogCategories.name,
+            categorySlug: catalogCategories.slug,
           })
           .from(couponProducts)
           .innerJoin(products, eq(couponProducts.storeProductId, products.id))
+          .leftJoin(
+            storeProductCategories,
+            eq(products.storeCategoryId, storeProductCategories.id),
+          )
+          .leftJoin(
+            catalogCategories,
+            eq(products.categoryId, catalogCategories.id),
+          )
           .where(inArray(couponProducts.couponId, couponIds))
           .orderBy(asc(couponProducts.createdAt)),
       ]);
 
       return [
-        ...catalogRows.map((row) => ({
-          ...row,
-          source: "store_catalog" as const,
-        })),
-        ...privateRows.map((row) => ({
-          ...row,
-          source: "store_private" as const,
-        })),
+        ...catalogRows.map(
+          ({ categoryId, categoryName, categorySlug, ...row }) => ({
+            ...row,
+            source: "store_catalog" as const,
+            category: {
+              id: categoryId,
+              name: categoryName,
+              key: categorySlug,
+            },
+          }),
+        ),
+        ...privateRows.map(
+          ({
+            storeCategoryId,
+            storeCategoryName,
+            categoryId,
+            categoryName,
+            categorySlug,
+            ...row
+          }) => ({
+            ...row,
+            source: "store_private" as const,
+            category: storeCategory(storeCategoryId, storeCategoryName) ??
+              catalogCategory(categoryId, categoryName, categorySlug),
+          }),
+        ),
       ];
     },
   };

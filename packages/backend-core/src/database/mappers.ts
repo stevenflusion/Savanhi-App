@@ -4,6 +4,7 @@ import type { Order } from "@repo/api-contracts/orders";
 import type { Product, Store } from "@repo/api-contracts/products";
 import type {
   CouponClaimStatus,
+  CouponProductCategory,
   CouponProductRef,
   CouponType,
   ImageContentType,
@@ -117,11 +118,13 @@ export type CouponProductRefRecord = CouponProductRef & { couponId: string };
 /**
  * A product reference joined to the name its source holds: `products.name` for
  * a store-private product, `catalog_products.commercial_name` for a global
- * catalog assignment. The route layer turns this into `CouponProductDetail`,
- * exactly as it does for `StorePhotoRecord`.
+ * catalog assignment, plus the category the app maps an icon from (S10). The
+ * route layer turns this into `CouponProductDetail`, exactly as it does for
+ * `StorePhotoRecord`.
  */
 export type CouponProductDetailRecord = CouponProductRefRecord & {
   name: string;
+  category: CouponProductCategory | null;
 };
 
 /**

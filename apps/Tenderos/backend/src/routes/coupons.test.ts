@@ -225,15 +225,39 @@ test("tendero coupon routes are owner scoped and type safe", async (t) => {
     token: string,
     storeId: string,
     name: string,
+    categoryId?: string,
   ): Promise<CouponProductRef> => {
     const response = await call(
       "POST",
       `/api/v1/tenderos/stores/${storeId}/products`,
-      { token, body: { name, price: 1.25, stock: 5 } },
+      {
+        token,
+        body: {
+          name,
+          price: 1.25,
+          stock: 5,
+          ...(categoryId === undefined ? {} : { categoryId }),
+        },
+      },
     );
     assert.equal(response.status, 201);
     const product = ((await response.json()) as { data: { id: string } }).data;
     return { source: "store_private", productId: product.id };
+  };
+
+  /** A store-authored product category (`store_product_categories`). */
+  const createStoreCategory = async (
+    token: string,
+    storeId: string,
+    name: string,
+  ): Promise<string> => {
+    const response = await call(
+      "POST",
+      `/api/v1/tenderos/stores/${storeId}/product-categories`,
+      { token, body: { name } },
+    );
+    assert.equal(response.status, 201);
+    return ((await response.json()) as { data: { id: string } }).data.id;
   };
 
   /**
@@ -315,6 +339,16 @@ test("tendero coupon routes are owner scoped and type safe", async (t) => {
     owner.token,
     owner.storeId,
     "Fideo 400g",
+  );
+  const ownerPrivateCategorized = await createPrivateProduct(
+    owner.token,
+    owner.storeId,
+    "Leche entera 1L",
+    await createStoreCategory(
+      owner.token,
+      owner.storeId,
+      `Coupon routes store category ${runId}`,
+    ),
   );
   const ownerCatalog = await createCatalogProduct(
     owner.storeId,
@@ -882,8 +916,52 @@ test("tendero coupon routes are owner scoped and type safe", async (t) => {
       );
       assert.deepEqual(
         Object.keys(byId.get(ownerPrivate.productId) ?? {}).sort(),
-        ["imageUrl", "name", "productId", "source"],
+        ["category", "name", "productId", "source"],
       );
+    },
+  );
+
+  await t.test(
+    "a product reference carries the category the app maps an icon from",
+    async () => {
+      const created = await call(
+        "POST",
+        `/api/v1/tenderos/stores/${owner.storeId}/coupons`,
+        {
+          token: owner.token,
+          body: couponBody("combo", [
+            ownerPrivate,
+            ownerPrivateCategorized,
+            ownerCatalog,
+          ]),
+        },
+      );
+      assert.equal(created.status, 201);
+      const coupon = ((await created.json()) as { data: Coupon }).data;
+      const byId = new Map(
+        coupon.products.map((product) => [product.productId, product]),
+      );
+
+      // A catalog product always has a catalog category, whose slug is the
+      // stable key the app maps to an icon (S5/S10).
+      const catalog = byId.get(ownerCatalog.productId)?.category;
+      assert.deepEqual(Object.keys(catalog ?? {}).sort(), [
+        "id",
+        "key",
+        "name",
+      ]);
+      assert.equal(catalog?.name, `Coupon routes category ${runId}`);
+      assert.equal(catalog?.key, catalogSlug);
+
+      // A store-authored category has no slug, so the key is null and the app
+      // falls back to its default icon.
+      const categorized = byId.get(ownerPrivateCategorized.productId)?.category;
+      assert.equal(categorized?.name, `Coupon routes store category ${runId}`);
+      assert.equal(categorized?.key, null);
+
+      // A store-private product without any category carries none at all,
+      // rather than an id with a missing name.
+      assert.equal(byId.get(ownerPrivate.productId)?.category, null);
     },
   );
 
@@ -1041,7 +1119,7 @@ test("tendero coupon routes are owner scoped and type safe", async (t) => {
       }).data;
       assert.deepEqual(
         products.map((product) => product.name).sort(),
-        ["Arroz 1kg", "Fideo 400g"],
+        ["Arroz 1kg", "Fideo 400g", "Leche entera 1L"],
       );
     },
   );
