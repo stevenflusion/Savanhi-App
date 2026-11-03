@@ -38,6 +38,24 @@ export {
   isImageKeyOwnedBy,
 } from "./storage/object-storage.js";
 export type { ImageOwner, ObjectStorage } from "./storage/object-storage.js";
-export { mapAdminUser, mapDelivery, mapOrder, mapProduct, mapProfile, mapStore, mapStorePhoto } from "./database/mappers.js";
-export type { StorePhotoRecord } from "./database/mappers.js";
+export {
+  mapAdminUser,
+  mapCoupon,
+  mapCouponClaim,
+  mapCouponProduct,
+  mapDelivery,
+  mapOrder,
+  mapProduct,
+  mapProfile,
+  mapStore,
+  mapStoreFollow,
+  mapStorePhoto,
+} from "./database/mappers.js";
+export type {
+  CouponClaimRecord,
+  CouponProductRefRecord,
+  CouponRecord,
+  StoreFollowRecord,
+  StorePhotoRecord,
+} from "./database/mappers.js";
 export type { BackendEnv } from "./types/env.js";

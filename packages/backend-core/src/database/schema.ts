@@ -1,6 +1,7 @@
 import {
   boolean,
   check,
+  date,
   doublePrecision,
   index,
   integer,
@@ -490,6 +491,281 @@ export const storePhotos = pgTable(
   }),
 );
 
+/**
+ * The four coupon types (S4). They are declared here instead of imported from
+ * `@repo/api-contracts` so drizzle-kit can load this schema without the
+ * contracts package being built. `mapCoupon` assigns `coupons.type` straight
+ * into the contract's `CouponType` with no cast, so adding a value here
+ * without adding it there is a compile error.
+ */
+const COUPON_TYPES = [
+  "free_text",
+  "combo",
+  "percentage",
+  "fixed_amount",
+] as const;
+type CouponTypeValue = (typeof COUPON_TYPES)[number];
+
+const COUPON_CLAIM_STATUSES = ["claimed", "redeemed"] as const;
+type CouponClaimStatusValue = (typeof COUPON_CLAIM_STATUSES)[number];
+
+/**
+ * A coupon belongs to one store and carries exactly one type (S4). The type is
+ * a text column with a CHECK over the closed set, matching the convention of
+ * `products.sale_unit` and `store_photos.content_type`; `coupons_type_value_chk`
+ * then pins which value field that type may carry and which it may not.
+ *
+ * `valid_from`/`valid_to` are DATE columns because coupon validity is
+ * date-granular and no screen ever shows a time (S11).
+ */
+export const coupons = pgTable(
+  "coupons",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    storeId: uuid("store_id")
+      .references(() => stores.id, { onDelete: "cascade" })
+      .notNull(),
+    type: text("type").$type<CouponTypeValue>().notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    /** Only a `free_text` coupon carries this. */
+    freeText: text("free_text"),
+    /** Only a `percentage` coupon carries this: a whole percent, 1 to 100. */
+    percentageValue: integer("percentage_value"),
+    /** Only a `fixed_amount` coupon carries this. */
+    fixedAmountValue: numeric("fixed_amount_value", {
+      precision: 12,
+      scale: 2,
+    }),
+    validFrom: date("valid_from", { mode: "string" }).notNull(),
+    validTo: date("valid_to", { mode: "string" }).notNull(),
+    totalStock: integer("total_stock").notNull(),
+    /**
+     * Claims already reserved against the stock (S8). Claiming reserves, so
+     * this counter is the reservation and `coupons_claimed_within_stock_chk`
+     * is what makes overselling impossible even under concurrent claims.
+     */
+    claimedCount: integer("claimed_count").default(0).notNull(),
+    /** Pausing blocks NEW claims only; existing claims stay redeemable (S6). */
+    paused: boolean("paused").default(false).notNull(),
+    /** Generated under the `coupons` image scope; the bytes live in Garage. */
+    imageObjectKey: text("image_object_key"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    storeIndex: index("coupons_store_idx").on(table.storeId),
+    validityIndex: index("coupons_validity_idx").on(
+      table.validFrom,
+      table.validTo,
+    ),
+    /** Two coupons never share one object key; a missing image is not a clash. */
+    objectKeyIndex: uniqueIndex("coupons_image_object_key_uidx")
+      .on(table.imageObjectKey)
+      .where(sql`${table.imageObjectKey} is not null`),
+    typeCheck: check(
+      "coupons_type_chk",
+      sql`${table.type} in ('free_text', 'combo', 'percentage', 'fixed_amount')`,
+    ),
+    /**
+     * Each type carries exactly what it needs and nothing else (S4). Every
+     * clause is an implication, so an unrecognised type leaves this check
+     * vacuously true and only `coupons_type_chk` reports the violation.
+     */
+    typeValueCheck: check(
+      "coupons_type_value_chk",
+      sql`(${table.type} <> 'free_text' or (${table.freeText} is not null and ${table.percentageValue} is null and ${table.fixedAmountValue} is null))
+        and (${table.type} <> 'percentage' or (${table.percentageValue} is not null and ${table.freeText} is null and ${table.fixedAmountValue} is null))
+        and (${table.type} <> 'fixed_amount' or (${table.fixedAmountValue} is not null and ${table.freeText} is null and ${table.percentageValue} is null))
+        and (${table.type} <> 'combo' or (${table.freeText} is null and ${table.percentageValue} is null and ${table.fixedAmountValue} is null))`,
+    ),
+    percentageRangeCheck: check(
+      "coupons_percentage_range_chk",
+      sql`${table.percentageValue} is null or (${table.percentageValue} >= 1 and ${table.percentageValue} <= 100)`,
+    ),
+    fixedAmountCheck: check(
+      "coupons_fixed_amount_positive_chk",
+      sql`${table.fixedAmountValue} is null or ${table.fixedAmountValue} > 0`,
+    ),
+    validityOrderCheck: check(
+      "coupons_validity_order_chk",
+      sql`${table.validFrom} <= ${table.validTo}`,
+    ),
+    totalStockCheck: check(
+      "coupons_total_stock_nonnegative_chk",
+      sql`${table.totalStock} >= 0`,
+    ),
+    /**
+     * `greatest` keeps this check from also firing on a negative total stock,
+     * which `coupons_total_stock_nonnegative_chk` owns, so a rejected write
+     * always names exactly one constraint.
+     */
+    claimedCountCheck: check(
+      "coupons_claimed_within_stock_chk",
+      sql`${table.claimedCount} >= 0 and ${table.claimedCount} <= greatest(${table.totalStock}, 0)`,
+    ),
+  }),
+);
+
+/**
+ * The products a coupon applies to (S5). A coupon holds one row per product, so
+ * a `2x1 / combo` coupon can reference two or more.
+ *
+ * The two product models the codebase already has stay distinguishable: a row
+ * points either at a global-catalog assignment (`store_catalog_products`) or at
+ * a store-private product (`products`), never at both and never at neither.
+ * Both references RESTRICT on delete, because a cascade could leave a coupon
+ * with zero products, the one state S5 forbids. Neither table is hard-deleted
+ * today — the catalog and product repositories only flip `active`.
+ */
+export const couponProducts = pgTable(
+  "coupon_products",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    couponId: uuid("coupon_id")
+      .references(() => coupons.id, { onDelete: "cascade" })
+      .notNull(),
+    storeCatalogProductId: uuid("store_catalog_product_id").references(
+      () => storeCatalogProducts.id,
+      { onDelete: "restrict" },
+    ),
+    storeProductId: uuid("store_product_id").references(() => products.id, {
+      onDelete: "restrict",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    /**
+     * One row per coupon+product. Two unique indexes instead of one because a
+     * row leaves the other source null, and a null never collides in a
+     * Postgres unique index — which is exactly the wanted behaviour.
+     */
+    couponCatalogIndex: uniqueIndex(
+      "coupon_products_coupon_catalog_uidx",
+    ).on(table.couponId, table.storeCatalogProductId),
+    couponPrivateIndex: uniqueIndex("coupon_products_coupon_private_uidx").on(
+      table.couponId,
+      table.storeProductId,
+    ),
+    singleSourceCheck: check(
+      "coupon_products_single_source_chk",
+      sql`num_nonnulls(${table.storeCatalogProductId}, ${table.storeProductId}) = 1`,
+    ),
+  }),
+);
+
+/**
+ * A customer's claim on a coupon. Claiming reserves stock and redemption comes
+ * later, in the store (S8), so a claim starts as `claimed` and moves once to
+ * `redeemed`.
+ *
+ * `qr_token_hash` stores only the SHA-256 of the opaque high-entropy token the
+ * customer renders as a QR (S3). The decision follows what this codebase
+ * already does with bearer secrets — `auth_sessions.token_hash` and
+ * `otp_challenges.code_hash` — so a database dump never yields a redeemable
+ * QR. The consequence is deliberate: the plaintext token exists only in the
+ * response that issues it, and a customer who loses it gets a NEW token
+ * written over this hash rather than the old one read back.
+ *
+ * `claimed_on`/`redeemed_on` are the dates a human sees (S11) and `created_at`
+ * is the internal instant used for ordering and never rendered. The display
+ * date is its own column because the local calendar day of an event is not
+ * derivable from a UTC instant without a zone.
+ */
+export const couponClaims = pgTable(
+  "coupon_claims",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    couponId: uuid("coupon_id")
+      .references(() => coupons.id, { onDelete: "cascade" })
+      .notNull(),
+    customerUserId: uuid("customer_user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    status: text("status")
+      .$type<CouponClaimStatusValue>()
+      .default("claimed")
+      .notNull(),
+    qrTokenHash: text("qr_token_hash").notNull(),
+    claimedOn: date("claimed_on", { mode: "string" })
+      .default(sql`current_date`)
+      .notNull(),
+    redeemedOn: date("redeemed_on", { mode: "string" }),
+    /** The tendero who scanned the QR. */
+    redeemedByUserId: uuid("redeemed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    /**
+     * Once per customer (S6). This index also serves "claims by coupon",
+     * because `coupon_id` is its leading column.
+     */
+    couponCustomerIndex: uniqueIndex(
+      "coupon_claims_coupon_customer_uidx",
+    ).on(table.couponId, table.customerUserId),
+    qrTokenIndex: uniqueIndex("coupon_claims_qr_token_hash_uidx").on(
+      table.qrTokenHash,
+    ),
+    customerIndex: index("coupon_claims_customer_idx").on(
+      table.customerUserId,
+    ),
+    statusCheck: check(
+      "coupon_claims_status_chk",
+      sql`${table.status} in ('claimed', 'redeemed')`,
+    ),
+    /**
+     * A redeemed claim always records when and by whom; an unredeemed one
+     * records neither. Written as a disjunction over `status = 'redeemed'` so
+     * an unrecognised status leaves this check satisfied and only
+     * `coupon_claims_status_chk` reports the violation.
+     */
+    redemptionCheck: check(
+      "coupon_claims_redemption_chk",
+      sql`(${table.status} = 'redeemed' and ${table.redeemedOn} is not null and ${table.redeemedByUserId} is not null)
+        or (${table.status} <> 'redeemed' and ${table.redeemedOn} is null and ${table.redeemedByUserId} is null)`,
+    ),
+  }),
+);
+
+/**
+ * A customer follows a store (S7). Follow and unfollow are idempotent, which
+ * the unique pair below is what makes safe.
+ */
+export const storeFollows = pgTable(
+  "store_follows",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    customerUserId: uuid("customer_user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    storeId: uuid("store_id")
+      .references(() => stores.id, { onDelete: "cascade" })
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    /** Also serves "follows by customer", its leading column. */
+    customerStoreIndex: uniqueIndex("store_follows_customer_store_uidx").on(
+      table.customerUserId,
+      table.storeId,
+    ),
+    /** Follower counts and the followed flag of the feed read by store. */
+    storeIndex: index("store_follows_store_idx").on(table.storeId),
+  }),
+);
+
 export const storeProductCategories = pgTable(
   "store_product_categories",
   {
@@ -560,6 +836,10 @@ export const schema = {
   storeCatalogProducts,
   storePhotos,
   storeProductCategories,
+  coupons,
+  couponProducts,
+  couponClaims,
+  storeFollows,
   orders,
   orderItems,
   deliveries,
