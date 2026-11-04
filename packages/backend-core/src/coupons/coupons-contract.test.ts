@@ -7,6 +7,7 @@ import {
   couponCreateSchema,
   couponProductRefSchema,
   couponUpdateSchema,
+  customerCoordinatesSchema,
   storeFollowSchema,
 } from "@repo/api-contracts";
 
@@ -476,6 +477,119 @@ test("a follow request carries a store id and nothing else", () => {
       storeId: randomUUID(),
       customerId: randomUUID(),
     }).success,
+    false,
+  );
+});
+
+/**
+ * A coordinate arrives as a query string, and the only thing that is a
+ * position is a plain decimal number. Everything else — above all a blank
+ * `lat=` — must be a rejection rather than a silent 0, because 0,0 is a real
+ * point in the Atlantic that the feed would happily answer from.
+ */
+const BLANK_OR_CLEVER_COORDINATES = [
+  "",
+  " ",
+  "   ",
+  "+",
+  "-",
+  "\t",
+  "\n",
+  " \t ",
+  "0x10",
+  "0X10",
+  "0b11",
+  "0o7",
+  "1e1",
+  "1E1",
+  "4.6e1",
+  "Infinity",
+  "-Infinity",
+  "NaN",
+  " 4.6",
+  "4.6 ",
+  ".5",
+  "5.",
+  "4,6",
+  "4.6.7",
+  "++4.6",
+  "4-6",
+  "N4.6",
+];
+
+test("a coordinate is never a blank, a space, or a non-decimal spelling", () => {
+  for (const value of BLANK_OR_CLEVER_COORDINATES) {
+    const shown = JSON.stringify(value);
+    assert.equal(
+      customerCoordinatesSchema.safeParse({ lat: value, lng: "-74.08175" })
+        .success,
+      false,
+      `lat ${shown}`,
+    );
+    assert.equal(
+      customerCoordinatesSchema.safeParse({ lat: "4.60971", lng: value })
+        .success,
+      false,
+      `lng ${shown}`,
+    );
+    assert.equal(
+      customerCoordinatesSchema.safeParse({ lat: value, lng: value }).success,
+      false,
+      `both ${shown}`,
+    );
+  }
+});
+
+test("a real coordinate pair parses to numbers", () => {
+  const parsed = customerCoordinatesSchema.parse({
+    lat: "4.60971",
+    lng: "-74.08175",
+  });
+  assert.deepEqual(parsed, { lat: 4.60971, lng: -74.08175 });
+  assert.equal(typeof parsed.lat, "number");
+  assert.equal(typeof parsed.lng, "number");
+
+  // A sign, a whole number and the extremes of both ranges are all positions.
+  assert.deepEqual(
+    customerCoordinatesSchema.parse({ lat: "+4", lng: "0" }),
+    { lat: 4, lng: 0 },
+  );
+  assert.deepEqual(
+    customerCoordinatesSchema.parse({ lat: "-90", lng: "180" }),
+    { lat: -90, lng: 180 },
+  );
+});
+
+test("the coordinate ranges and the strict object still hold", () => {
+  for (const pair of [
+    { lat: "91", lng: "0" },
+    { lat: "-91", lng: "0" },
+    { lat: "0", lng: "181" },
+    { lat: "0", lng: "-181" },
+    { lat: "90.0001", lng: "0" },
+  ]) {
+    assert.equal(
+      customerCoordinatesSchema.safeParse(pair).success,
+      false,
+      JSON.stringify(pair),
+    );
+  }
+
+  assert.equal(customerCoordinatesSchema.safeParse({ lat: "4.6" }).success, false);
+  assert.equal(customerCoordinatesSchema.safeParse({ lng: "4.6" }).success, false);
+  assert.equal(customerCoordinatesSchema.safeParse({}).success, false);
+  assert.equal(
+    customerCoordinatesSchema.safeParse({
+      lat: "4.60971",
+      lng: "-74.08175",
+      radius: "9000",
+    }).success,
+    false,
+  );
+  // Express hands back an array for a repeated parameter; that is not a point.
+  assert.equal(
+    customerCoordinatesSchema.safeParse({ lat: ["4.6", "5.6"], lng: "0" })
+      .success,
     false,
   );
 });

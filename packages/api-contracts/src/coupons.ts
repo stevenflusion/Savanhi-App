@@ -435,21 +435,33 @@ export type StoreFollowRequest = z.infer<typeof storeFollowSchema>;
 export const COUPON_FEED_RADIUS_METERS = 3_000;
 
 /**
- * The customer's own position, as it arrives in a query string — hence the
- * coercion, and hence the explicit finite check: `Number("")` is `0`, so a
- * blank `lat=` would otherwise read as the equator.
+ * A coordinate as it arrives in a query string: an optional sign, digits, and
+ * an optional fraction. Nothing else.
+ *
+ * The shape is matched BEFORE anything is converted, because `Number` is far
+ * too generous to be a validator here: `Number("")`, `Number("  ")` and
+ * `Number("+")` are all `0`, so a blank `lat=` would read as the equator and
+ * the feed would answer from 0,0 as if the customer were standing in the
+ * Atlantic. `Number` also accepts spellings that are not positions —
+ * `"0x10"` is 16 and `"1e1"` is 10 — and a finite check cannot tell any of
+ * them apart from a real reading, since every one of them IS finite.
  */
+const DECIMAL_COORDINATE = /^[+-]?\d+(\.\d+)?$/;
+
+/**
+ * The customer's own position. Both axes parse the same way and differ only in
+ * their range, so the bound is the parameter.
+ */
+const coordinateSchema = (bound: 90 | 180, axis: "Latitude" | "Longitude") =>
+  z
+    .string(`${axis} must be a decimal number.`)
+    .regex(DECIMAL_COORDINATE, `${axis} must be a decimal number.`)
+    .transform(Number)
+    .pipe(z.number().min(-bound).max(bound));
+
 export const customerCoordinatesSchema = z.strictObject({
-  lat: z.coerce
-    .number()
-    .refine(Number.isFinite, "Latitude must be a number.")
-    .min(-90)
-    .max(90),
-  lng: z.coerce
-    .number()
-    .refine(Number.isFinite, "Longitude must be a number.")
-    .min(-180)
-    .max(180),
+  lat: coordinateSchema(90, "Latitude"),
+  lng: coordinateSchema(180, "Longitude"),
 });
 export type CustomerCoordinates = z.infer<typeof customerCoordinatesSchema>;
 

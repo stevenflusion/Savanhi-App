@@ -536,6 +536,40 @@ test("customer coupon routes discover, follow and claim", async (t) => {
   });
 
   await t.test(
+    "a blank coordinate is rejected and never read as the equator",
+    async () => {
+      // `Number("")` is `0`, so a blank parameter used to answer 200 as if the
+      // customer were standing at 0,0 — a real point in the Atlantic.
+      const blank = [
+        "lat=&lng=",
+        "lat=&lng=-74.0721",
+        "lat=4.711&lng=",
+        "lat=%20&lng=%09",
+        "lat=0x10&lng=0",
+        "lat=1e1&lng=0",
+      ];
+
+      for (const query of blank) {
+        for (const route of [
+          "/api/v1/clientes/stores/nearby",
+          "/api/v1/clientes/coupons/feed",
+        ]) {
+          const response = await call("GET", `${route}?${query}`, {
+            token: customer.token,
+          });
+          assert.equal(response.status, 400, `${route}?${query}`);
+          const body = (await response.json()) as { error: string };
+          assert.equal(
+            body.error,
+            "Invalid request payload.",
+            `${route}?${query}`,
+          );
+        }
+      }
+    },
+  );
+
+  await t.test(
     "nearby returns active stores inside 3 km ordered by distance",
     async () => {
       const response = await nearby(customer.token);
