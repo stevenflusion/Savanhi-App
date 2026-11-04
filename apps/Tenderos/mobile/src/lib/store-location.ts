@@ -5,17 +5,16 @@ import { MAPBOX_ACCESS_TOKEN } from "./mapbox";
 /**
  * The short "where the store is" line, in ONE place.
  *
- * This is the derivation the Perfil tab has been doing inline since before the
+ * This is the derivation the Perfil tab had been doing inline since before the
  * coupons feature existed: Mapbox reverse geocoding first, the device's own
  * reverse geocoder second, and the stored address's last two segments as the
- * final fallback. It is lifted here verbatim so the Home header shows exactly
+ * final fallback. It was lifted here verbatim so the Home header shows exactly
  * what the Perfil tab shows — the alternative was a SECOND geocoding path
  * answering a slightly different label for the same coordinates.
  *
- * `app/(tabs)/profile.tsx` is outside this work unit's edit surface, so it
- * still carries its own copy for now; moving it onto this module is the first
- * job of T14, and until then this file is the shared definition and not yet
- * the only caller.
+ * T14 moved the Perfil tab onto it, so the inline copy is gone and this is now
+ * the ONLY geocoding path in the app. Both callers — the Home header and the
+ * Perfil header — go through this function; nothing else reverse-geocodes.
  */
 export type StoreLocationSource = {
   address?: string | null;
