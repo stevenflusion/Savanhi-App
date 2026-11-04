@@ -32,6 +32,10 @@ El adaptador usa `fetch` nativo contra `https://api.resend.com/emails`, cancela 
 
 Each backend creates a context, which wires Drizzle PostgreSQL repositories and the JWT auth service. Controllers/routes validate input with Zod, call repository/use-case boundaries, and return the existing `{ data }`, `{ user }`, and `{ session }` response shapes.
 
+## API reference
+
+`docs/api-clientes.md` documents every endpoint the future customer app calls — the eight `/api/v1/clientes/*` routes plus the auth routes — with request and response shapes, every error status with its exact message, captured examples, and the gaps that still block a customer app.
+
 ## Production
 
 The Tenderos backend has a non-root multi-stage Dockerfile at `apps/Tenderos/backend/Dockerfile`. Build it from the repository root with `docker build -f apps/Tenderos/backend/Dockerfile -t tenderos-backend .`.
