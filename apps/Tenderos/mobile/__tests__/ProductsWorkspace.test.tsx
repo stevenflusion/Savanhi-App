@@ -1,12 +1,15 @@
 import React from "react";
-import { fireEvent, render, waitFor } from "@testing-library/react-native";
+import { fireEvent, render, waitFor, within } from "@testing-library/react-native";
 import { ProductsWorkspace } from "@/src/components/ProductsWorkspace";
 
 const mockRequestAuthenticated = jest.fn();
 jest.mock("@/src/features/auth", () => ({
   useAuth: () => ({ requestAuthenticated: mockRequestAuthenticated }),
 }));
+
+const mockPush = jest.fn();
 jest.mock("expo-router", () => ({
+  useRouter: () => ({ push: mockPush, back: jest.fn() }),
   useFocusEffect: (callback: () => void) =>
     require("react").useEffect(callback, [callback]),
 }));
@@ -17,7 +20,10 @@ const response = (data: unknown) => ({
 });
 
 describe("ProductsWorkspace", () => {
-  beforeEach(() => mockRequestAuthenticated.mockReset());
+  beforeEach(() => {
+    mockRequestAuthenticated.mockReset();
+    mockPush.mockReset();
+  });
 
   it("loads the selected store's shared and private stock from persisted routes", async () => {
     mockRequestAuthenticated.mockImplementation(async (path: string) => {
@@ -74,9 +80,10 @@ describe("ProductsWorkspace", () => {
       undefined,
     );
     expect(screen.getByText("Local beans")).toBeTruthy();
-    expect(screen.getByText("Price pending")).toBeTruthy();
-    expect(screen.getByText("Shared catalog")).toBeTruthy();
-    expect(screen.getByText("Store private")).toBeTruthy();
+    // Copy the redesign changed: the three English labels are Spanish now.
+    expect(screen.getByText("Sin precio")).toBeTruthy();
+    expect(screen.getByText("Catálogo compartido")).toBeTruthy();
+    expect(screen.getByText("Producto propio")).toBeTruthy();
   });
 
   it("requires valid positive price and sale unit before adding a shared product", async () => {
@@ -107,7 +114,7 @@ describe("ProductsWorkspace", () => {
       expect.stringContaining("/stores/s1/catalog"),
       expect.objectContaining({ method: "POST" }),
     );
-    fireEvent.changeText(screen.getByPlaceholderText("Price (USD)"), "1.25");
+    fireEvent.changeText(screen.getByPlaceholderText("Precio (USD)"), "1.25");
     fireEvent.press(screen.getByText("kg"));
     fireEvent.press(screen.getByText("Agregar a mi tienda"));
     await waitFor(() =>
@@ -137,23 +144,60 @@ describe("ProductsWorkspace", () => {
     });
     const screen = render(<ProductsWorkspace addIntent />);
     await waitFor(() =>
-      expect(screen.getByText("Add private product")).toBeTruthy(),
+      expect(screen.getByText("Agregar producto propio")).toBeTruthy(),
     );
-    fireEvent.press(screen.getByText("Add private product"));
     fireEvent.changeText(
-      screen.getByPlaceholderText("Product name"),
+      screen.getByPlaceholderText("Nombre del producto"),
       "Farm eggs",
     );
-    fireEvent.changeText(screen.getByPlaceholderText("Price (USD)"), "3.50");
-    fireEvent.press(screen.getByText("Create category"));
-    fireEvent.changeText(screen.getByPlaceholderText("Category name"), "Farm");
-    fireEvent.press(screen.getByText("Save category"));
+    fireEvent.changeText(screen.getByPlaceholderText("Precio (USD)"), "3.50");
+    fireEvent.press(screen.getByText("Crear categoría"));
+    fireEvent.changeText(
+      screen.getByPlaceholderText("Nombre de la categoría"),
+      "Farm",
+    );
+    fireEvent.press(screen.getByText("Guardar categoría"));
     await waitFor(() =>
       expect(mockRequestAuthenticated).toHaveBeenCalledWith(
         "/api/v1/tenderos/stores/s1/product-categories",
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({ name: "Farm" }),
+        }),
+      ),
+    );
+  });
+
+  it("saves a private product through the store-scoped route", async () => {
+    mockRequestAuthenticated.mockImplementation(async (path: string) => {
+      if (path === "/api/v1/tenderos/stores/me")
+        return response([{ id: "s1" }]);
+      return response([]);
+    });
+    const screen = render(<ProductsWorkspace addIntent />);
+    await waitFor(() =>
+      expect(screen.getByText("Agregar producto propio")).toBeTruthy(),
+    );
+
+    fireEvent.changeText(
+      screen.getByPlaceholderText("Nombre del producto"),
+      "Farm eggs",
+    );
+    fireEvent.changeText(screen.getByPlaceholderText("Precio (USD)"), "3.50");
+    fireEvent.press(screen.getByText("Guardar producto propio"));
+
+    await waitFor(() =>
+      expect(mockRequestAuthenticated).toHaveBeenCalledWith(
+        "/api/v1/tenderos/stores/s1/products",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            name: "Farm eggs",
+            price: 3.5,
+            stock: 1,
+            saleUnit: "unidad",
+            integerOnly: false,
+          }),
         }),
       ),
     );
@@ -243,5 +287,239 @@ describe("ProductsWorkspace", () => {
         expect(child).not.toMatch(clock);
       }
     }
+  });
+});
+
+/**
+ * The capabilities the redesign had to keep working. Every one of these is a
+ * behaviour the tab already had before T14 and the restyle is only allowed to
+ * change how it looks.
+ */
+describe("the Productos tab keeps every capability it had", () => {
+  const STORE_ID = "s1";
+  const RICE = "rice-assignment";
+  const BEANS = "beans-private";
+
+  const catalogue = () => [
+    {
+      id: RICE,
+      product: {
+        id: "rice-catalog",
+        categoryId: "cat-1",
+        categoryName: "Despensa",
+        commercialName: "Arroz 1 kg",
+        brandName: "Marca",
+        presentation: null,
+        netContent: null,
+        netContentUnit: null,
+        observedPrices: [],
+      },
+      price: 1.5,
+      stock: 4,
+      active: true,
+      saleUnit: "kg",
+      integerOnly: false,
+    },
+  ];
+
+  const privateRows = () => [
+    {
+      id: BEANS,
+      name: "Frejol de la casa",
+      categoryId: null,
+      categoryName: "Granos",
+      price: 2.5,
+      stock: 3,
+      active: true,
+      saleUnit: "kg",
+      integerOnly: false,
+    },
+  ];
+
+  beforeEach(() => {
+    mockRequestAuthenticated.mockReset();
+    mockPush.mockReset();
+    mockRequestAuthenticated.mockImplementation(
+      async (path: string, init?: RequestInit) => {
+        if (init?.method) return response({ ok: true });
+        if (path === "/api/v1/tenderos/stores/me")
+          return response([{ id: STORE_ID, name: "Tienda Doña Rosa" }]);
+        if (path === "/api/v1/tenderos/catalog") return response([]);
+        if (path.endsWith(`/${STORE_ID}/catalog`))
+          return response(catalogue());
+        if (path.endsWith(`/${STORE_ID}/products`))
+          return response(privateRows());
+        if (path.endsWith("/product-categories"))
+          return response([{ id: "c1", name: "Despensa", shared: true }]);
+        return response([]);
+      },
+    );
+  });
+
+  const ready = async () => {
+    const screen = render(<ProductsWorkspace />);
+    await waitFor(() => expect(screen.getByText("Arroz 1 kg")).toBeTruthy());
+    return screen;
+  };
+
+  it("still searches the catalog by name", async () => {
+    const screen = await ready();
+
+    fireEvent.changeText(screen.getByLabelText("Buscar productos"), "frejol");
+
+    expect(screen.getByText("Frejol de la casa")).toBeTruthy();
+    expect(screen.queryByText("Arroz 1 kg")).toBeNull();
+  });
+
+  it("still filters the catalog by category", async () => {
+    const screen = await ready();
+
+    fireEvent.press(within(screen.getByTestId("category-filters")).getByText("Granos"));
+
+    expect(screen.getByText("Frejol de la casa")).toBeTruthy();
+    expect(screen.queryByText("Arroz 1 kg")).toBeNull();
+
+    fireEvent.press(within(screen.getByTestId("category-filters")).getByText("Todas"));
+    expect(screen.getByText("Arroz 1 kg")).toBeTruthy();
+  });
+
+  it("still edits a product's price and stock through the existing route", async () => {
+    const screen = await ready();
+
+    fireEvent.press(screen.getByLabelText("Editar Arroz 1 kg"));
+    fireEvent.changeText(screen.getByPlaceholderText("Precio"), "2.00");
+    fireEvent.changeText(screen.getByPlaceholderText("Stock"), "9");
+    fireEvent.press(screen.getByText("Guardar"));
+
+    await waitFor(() =>
+      expect(mockRequestAuthenticated).toHaveBeenCalledWith(
+        `/api/v1/tenderos/store-catalog-products/${RICE}`,
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ stock: 9, price: 2 }),
+        }),
+      ),
+    );
+  });
+
+  it("still unassigns a product from the store", async () => {
+    const screen = await ready();
+
+    fireEvent.press(screen.getByLabelText("Editar Arroz 1 kg"));
+    fireEvent.press(screen.getByText("Quitar"));
+
+    await waitFor(() =>
+      expect(mockRequestAuthenticated).toHaveBeenCalledWith(
+        `/api/v1/tenderos/store-catalog-products/${RICE}`,
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ active: false }),
+        }),
+      ),
+    );
+  });
+
+  it("still registers a sale against the stored stock", async () => {
+    const screen = await ready();
+
+    fireEvent.press(screen.getByText("Registrar venta"));
+    fireEvent.press(
+      within(screen.getByTestId("sale-products")).getByText("Arroz 1 kg"),
+    );
+    fireEvent.changeText(screen.getByPlaceholderText("Cantidad"), "2");
+    fireEvent.press(screen.getByText("Confirmar venta"));
+
+    await waitFor(() =>
+      expect(mockRequestAuthenticated).toHaveBeenCalledWith(
+        `/api/v1/tenderos/store-catalog-products/${RICE}`,
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ stock: 2 }),
+        }),
+      ),
+    );
+  });
+
+  it("still opens the add tool on intent=add", async () => {
+    const screen = render(<ProductsWorkspace addIntent />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Elegir del catálogo global")).toBeTruthy(),
+    );
+  });
+});
+
+describe("the Productos tab and the product detail", () => {
+  const STORE_ID = "s1";
+  const RICE = "rice-assignment";
+
+  beforeEach(() => {
+    mockRequestAuthenticated.mockReset();
+    mockPush.mockReset();
+    mockRequestAuthenticated.mockImplementation(
+      async (path: string, init?: RequestInit) => {
+        if (init?.method) return response({ ok: true });
+        if (path === "/api/v1/tenderos/stores/me")
+          return response([{ id: STORE_ID, name: "Tienda Doña Rosa" }]);
+        if (path === "/api/v1/tenderos/catalog") return response([]);
+        if (path.endsWith(`/${STORE_ID}/catalog`))
+          return response([
+            {
+              id: RICE,
+              product: {
+                id: "rice-catalog",
+                categoryId: "cat-1",
+                categoryName: "Despensa",
+                commercialName: "Arroz 1 kg",
+                brandName: "",
+                presentation: null,
+                netContent: null,
+                netContentUnit: null,
+                observedPrices: [],
+              },
+              price: 1.5,
+              stock: 4,
+              active: true,
+              saleUnit: "kg",
+              integerOnly: false,
+            },
+          ]);
+        return response([]);
+      },
+    );
+  });
+
+  it("opens the detail of the product whose card was tapped", async () => {
+    const screen = render(<ProductsWorkspace />);
+    await waitFor(() => expect(screen.getByText("Arroz 1 kg")).toBeTruthy());
+
+    fireEvent.press(screen.getByLabelText("Ver Arroz 1 kg"));
+
+    expect(mockPush).toHaveBeenCalledWith(`/product/${RICE}`);
+  });
+
+  it("never navigates when the tendero only wanted to edit", async () => {
+    const screen = render(<ProductsWorkspace />);
+    await waitFor(() => expect(screen.getByText("Arroz 1 kg")).toBeTruthy());
+
+    fireEvent.press(screen.getByLabelText("Editar Arroz 1 kg"));
+
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText("Precio")).toBeTruthy();
+  });
+
+  it("opens the editor of the product the detail sent it to", async () => {
+    const screen = render(<ProductsWorkspace editProductId={RICE} />);
+
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText("Precio")).toBeTruthy(),
+    );
+  });
+
+  it("ignores an edit intent naming a product that is not in the store", async () => {
+    const screen = render(<ProductsWorkspace editProductId="not-here" />);
+
+    await waitFor(() => expect(screen.getByText("Arroz 1 kg")).toBeTruthy());
+    expect(screen.queryByPlaceholderText("Precio")).toBeNull();
   });
 });

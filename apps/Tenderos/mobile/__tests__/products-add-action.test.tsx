@@ -8,6 +8,9 @@ jest.mock("@/src/features/auth", () => ({
   useAuth: () => ({ requestAuthenticated: mockRequestAuthenticated }),
 }));
 jest.mock("expo-router", () => ({
+  // The workspace pushes the product detail now (T14), so the mock has to
+  // carry a router. Nothing in this suite navigates.
+  useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
   useFocusEffect: (callback: () => void) =>
     require("react").useEffect(callback, [callback]),
 }));
@@ -58,7 +61,7 @@ describe("the action the old center [+] button performed", () => {
     fireEvent.press(screen.getByText("Agregar producto"));
 
     expect(screen.getByText("Elegir del catálogo global")).toBeTruthy();
-    expect(screen.getByPlaceholderText("Price (USD)")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Precio (USD)")).toBeTruthy();
   });
 
   it("still honours the intent=add entry point the button used", async () => {

@@ -1,84 +1,51 @@
-import type {
-  CatalogProduct,
-  CatalogStoreProduct,
-} from "@repo/api-contracts/catalog";
-import { useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CatalogProduct } from "@repo/api-contracts/catalog";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
+
 import { useAuth } from "../features/auth";
-import { AlertCard } from "./AlertCard";
+import type { Product } from "../features/products/domain/product";
+import {
+  catalogPresentationLabel,
+  createProductsFetchRepository,
+} from "../features/products/infrastructure/products-fetch-repository";
 import { EmptyState } from "./EmptyState";
 import { FilterTabs } from "./FilterTabs";
-import { ProductCard, type Product } from "./ProductCard";
+import { ProductCard } from "./ProductCard";
 import { SearchBar } from "./SearchBar";
-import { InventorySummaryCard } from "./InventorySummaryCard";
 
 type Tool = "add" | "sale" | "inventory";
 type Store = { id: string; name?: string };
 type Category = { id: string; name: string; shared?: boolean };
 type SaleUnit = Product["saleUnit"];
 
-function productLabel(product: CatalogProduct) {
-  return [
-    product.presentation,
-    product.netContent && product.netContentUnit
-      ? `${product.netContent} ${product.netContentUnit}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-function toProduct(item: CatalogStoreProduct): Product {
-  const inventoryRules = item as CatalogStoreProduct & {
-    saleUnit?: SaleUnit;
-    integerOnly?: boolean;
-  };
-  const observedPrice =
-    item.product.observedPrices
-      .filter(
-        (price) =>
-          price.amount !== null &&
-          price.source.toLowerCase().startsWith("supermaxi"),
-      )
-      .sort(
-        (left, right) =>
-          new Date(right.observedAt).getTime() -
-          new Date(left.observedAt).getTime(),
-      )[0] ?? null;
-
-  return {
-    id: item.id,
-    name: item.product.commercialName,
-    category: item.product.categoryName,
-    brand: item.product.brandName,
-    presentation: productLabel(item.product),
-    price: item.price,
-    observedPrice,
-    stock: item.stock,
-    active: item.active,
-    saleUnit: inventoryRules.saleUnit ?? "unidad",
-    integerOnly: inventoryRules.integerOnly ?? false,
-    source: "shared",
-    pricePending: item.price === null || item.price <= 0,
-  };
-}
+const ALL_CATEGORIES = "Todas";
 
 export function ProductsWorkspace({
   addIntent = false,
+  editProductId = "",
 }: {
   addIntent?: boolean;
+  /** The product the detail screen asked this tab to open the editor on. */
+  editProductId?: string;
 }) {
+  const router = useRouter();
   const { requestAuthenticated } = useAuth();
+  const repository = useMemo(
+    () => createProductsFetchRepository(requestAuthenticated),
+    [requestAuthenticated],
+  );
+
   const [products, setProducts] = useState<Product[]>([]);
   const [globalProducts, setGlobalProducts] = useState<CatalogProduct[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [storeId, setStoreId] = useState("");
   const [tool, setTool] = useState<Tool>("inventory");
   const [selectedProductId, setSelectedProductId] = useState("");
+  const [editingProductId, setEditingProductId] = useState("");
   const [saleQty, setSaleQty] = useState("1");
   const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("Todas");
+  const [categoryFilter, setCategoryFilter] = useState(ALL_CATEGORIES);
   const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -110,11 +77,16 @@ export function ProductsWorkspace({
     setLoading(true);
     setError("");
     try {
-      const [storesResponse, globalResponse] = await Promise.all([
-        requestJson("/api/v1/tenderos/stores/me"),
+      // The store list and the store's products come from the SHARED products
+      // repository, which is what the product detail and the Perfil tab read
+      // through too — one mapping for one catalog.
+      const [storesResult, globalResponse] = await Promise.all([
+        repository.listOwnStores(),
         requestJson("/api/v1/tenderos/catalog"),
       ]);
-      const nextStores = (storesResponse.data ?? []) as Store[];
+      if (!storesResult.success) throw new Error(storesResult.error);
+
+      const nextStores = storesResult.data as Store[];
       const nextStoreId =
         storeId && nextStores.some((store) => store.id === storeId)
           ? storeId
@@ -126,46 +98,14 @@ export function ProductsWorkspace({
         setProducts([]);
         return;
       }
-      const [storeResponse, privateResponse, categoriesResponse] =
-        await Promise.all([
-          requestJson(`/api/v1/tenderos/stores/${nextStoreId}/catalog`),
-          requestJson(`/api/v1/tenderos/stores/${nextStoreId}/products`),
-          requestJson(
-            `/api/v1/tenderos/stores/${nextStoreId}/product-categories`,
-          ),
-        ]);
-      const shared = ((storeResponse.data ?? []) as CatalogStoreProduct[]).map(
-        toProduct,
-      );
-      const privateItems = (privateResponse.data ?? []) as Array<{
-        id: string;
-        name: string;
-        categoryName?: string | null;
-        categoryId?: string | null;
-        price: number | null;
-        stock: number;
-        active: boolean;
-        saleUnit: SaleUnit;
-        integerOnly: boolean;
-      }>;
-      setProducts([
-        ...shared,
-        ...privateItems.map((item) => ({
-          id: item.id,
-          name: item.name,
-          category: item.categoryName || "Sin categoría",
-          brand: "",
-          presentation: "",
-          price: item.price,
-          observedPrice: null,
-          stock: item.stock,
-          active: item.active,
-          saleUnit: item.saleUnit ?? "unidad",
-          integerOnly: item.integerOnly ?? false,
-          source: "private" as const,
-          pricePending: item.price === null || item.price <= 0,
-        })),
+
+      const [storeProducts, categoriesResponse] = await Promise.all([
+        repository.listStoreProducts(nextStoreId),
+        requestJson(`/api/v1/tenderos/stores/${nextStoreId}/product-categories`),
       ]);
+      if (!storeProducts.success) throw new Error(storeProducts.error);
+
+      setProducts(storeProducts.data);
       setCategoriesList((categoriesResponse.data ?? []) as Category[]);
     } catch (cause) {
       setError(
@@ -176,7 +116,7 @@ export function ProductsWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [requestJson, storeId]);
+  }, [repository, requestJson, storeId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -184,37 +124,45 @@ export function ProductsWorkspace({
     }, [loadCatalog]),
   );
 
+  /**
+   * The incoming edit intent is honoured ONCE, through a ref: the tab reloads
+   * on every focus, and re-opening the editor each time would make closing it
+   * impossible. An id that is not in the store is ignored rather than opening
+   * someone else's card.
+   */
+  const editIntentApplied = useRef(false);
+  useEffect(() => {
+    if (editIntentApplied.current || !editProductId) return;
+    if (!products.some((product) => product.id === editProductId)) return;
+    editIntentApplied.current = true;
+    setTool("inventory");
+    setEditingProductId(editProductId);
+  }, [editProductId, products]);
+
   const categories = useMemo(
-    () => ["Todas", ...Array.from(new Set(products.map((p) => p.category)))],
+    () => [
+      ALL_CATEGORIES,
+      ...Array.from(new Set(products.map((product) => product.category))),
+    ],
     [products],
   );
   const filteredProducts = useMemo(() => {
     const query = search.trim().toLowerCase();
     return products.filter(
       (p) =>
-        (categoryFilter === "Todas" || p.category === categoryFilter) &&
+        (categoryFilter === ALL_CATEGORIES || p.category === categoryFilter) &&
         (!query ||
           `${p.name} ${p.brand} ${p.category} ${p.presentation}`
             .toLowerCase()
             .includes(query)),
     );
   }, [products, search, categoryFilter]);
-  const grouped = useMemo(
-    () =>
-      filteredProducts.reduce<Record<string, Product[]>>((acc, product) => {
-        (acc[product.category] ??= []).push(product);
-        return acc;
-      }, {}),
-    [filteredProducts],
-  );
   const summary = useMemo(
     () => ({
       total: products.length,
       inStock: products.filter((p) => p.stock > 5).length,
       lowStock: products.filter((p) => p.stock > 0 && p.stock <= 5).length,
       outOfStock: products.filter((p) => p.stock === 0).length,
-      expiringSoon: 0,
-      expired: 0,
     }),
     [products],
   );
@@ -229,7 +177,7 @@ export function ProductsWorkspace({
       Number(priceInput) <= 0 ||
       !/^\d+(?:\.\d{1,2})?$/.test(priceInput.trim())
     ) {
-      setError("Enter a positive price with at most two decimal places.");
+      setError("Escribe un precio positivo con máximo dos decimales.");
       return;
     }
     setSaving(true);
@@ -278,7 +226,9 @@ export function ProductsWorkspace({
       setCreatingCategory(false);
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "Could not create category.",
+        cause instanceof Error
+          ? cause.message
+          : "No se pudo crear la categoría.",
       );
     } finally {
       setSaving(false);
@@ -294,7 +244,7 @@ export function ProductsWorkspace({
       !/^\d+(?:\.\d{1,2})?$/.test(priceInput.trim())
     ) {
       setError(
-        "A name and positive price with at most two decimal places are required.",
+        "Escribe un nombre y un precio positivo con máximo dos decimales.",
       );
       return;
     }
@@ -317,7 +267,9 @@ export function ProductsWorkspace({
       await loadCatalog();
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "Could not create product.",
+        cause instanceof Error
+          ? cause.message
+          : "No se pudo crear el producto.",
       );
     } finally {
       setSaving(false);
@@ -349,7 +301,7 @@ export function ProductsWorkspace({
           product.price <= 0) &&
         !(changes.price && changes.price > 0)
       ) {
-        setError("Enter a positive price before activating this product.");
+        setError("Escribe un precio positivo antes de activar este producto.");
         return;
       }
       await requestJson(endpoint, {
@@ -421,102 +373,145 @@ export function ProductsWorkspace({
       className="flex-1"
       contentContainerStyle={{
         paddingHorizontal: 16,
-        paddingBottom: 24,
-        gap: 12,
+        paddingBottom: 140,
+        gap: 16,
       }}
       showsVerticalScrollIndicator={false}
     >
-      <View className="w-full max-w-xl self-center rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <Text className="text-base font-semibold text-slate-900">
-          Acciones de productos
-        </Text>
-        <View className="mt-3 flex-row flex-wrap gap-2">
-          {[
-            { id: "add", label: "Agregar producto", value: "add" as Tool },
-            { id: "sale", label: "Registrar venta", value: "sale" as Tool },
-            {
-              id: "inv",
-              label: "Revisar inventario",
-              value: "inventory" as Tool,
-            },
-          ].map((action) => (
-            <Pressable
-              key={action.id}
-              onPress={() => setTool(action.value)}
-              className={`min-h-[44px] min-w-[31%] flex-1 items-center justify-center rounded-xl border px-2 py-2 ${tool === action.value ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}
+      <View className="w-full max-w-xl flex-row flex-wrap gap-2 self-center">
+        {[
+          { id: "add", label: "Agregar producto", value: "add" as Tool },
+          { id: "sale", label: "Registrar venta", value: "sale" as Tool },
+          {
+            id: "inv",
+            label: "Revisar inventario",
+            value: "inventory" as Tool,
+          },
+        ].map((action) => (
+          <Pressable
+            key={action.id}
+            accessibilityRole="button"
+            accessibilityState={{ selected: tool === action.value }}
+            onPress={() => setTool(action.value)}
+            className={`min-h-[44px] min-w-[31%] flex-1 items-center justify-center rounded-full px-3 ${
+              tool === action.value ? "bg-black" : "bg-white"
+            }`}
+          >
+            <Text
+              className={`text-xs font-semibold ${
+                tool === action.value ? "text-white" : "text-slate-700"
+              }`}
             >
-              <Text
-                className={`text-xs font-semibold ${tool === action.value ? "text-emerald-800" : "text-slate-700"}`}
-              >
-                {action.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+              {action.label}
+            </Text>
+          </Pressable>
+        ))}
       </View>
 
       {stores.length > 1 ? (
-        <View className="flex-row flex-wrap gap-2">
+        <View className="w-full max-w-xl flex-row flex-wrap gap-2 self-center">
           {stores.map((store) => (
             <Pressable
               key={store.id}
+              accessibilityRole="button"
               onPress={() => setStoreId(store.id)}
-              className={`rounded-xl border px-3 py-2 ${storeId === store.id ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"}`}
+              className={`rounded-full px-4 py-2 ${
+                storeId === store.id ? "bg-black" : "bg-white"
+              }`}
             >
-              <Text>{store.name || "Store"}</Text>
+              <Text
+                className={`text-sm font-semibold ${
+                  storeId === store.id ? "text-white" : "text-slate-700"
+                }`}
+              >
+                {store.name || "Tienda"}
+              </Text>
             </Pressable>
           ))}
         </View>
       ) : null}
 
       {tool === "add" ? (
-        <View className="w-full max-w-xl self-center rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <Text className="text-base font-semibold text-slate-900">
+        <View className="w-full max-w-xl self-center rounded-3xl bg-white p-4 shadow-sm">
+          <Text className="text-xl font-semibold tracking-tight text-slate-900">
             Elegir del catálogo global
           </Text>
-          <Text className="mt-1 text-sm text-slate-600">
-            Select a shared catalog product and configure its price and sale
-            unit. Stock starts at 1.
+          <Text className="mt-1 text-sm text-slate-500">
+            Elige un producto del catálogo compartido y define su precio y
+            unidad de venta. El stock empieza en 1.
           </Text>
           <TextInput
             value={priceInput}
             onChangeText={setPriceInput}
-            placeholder="Price (USD)"
+            placeholder="Precio (USD)"
+            placeholderTextColor="#94a3b8"
             keyboardType="decimal-pad"
-            className="mt-3 rounded-lg border border-slate-200 px-3 py-2"
+            className="mt-3 rounded-2xl bg-slate-50 px-4 py-3 text-slate-900"
           />
-          <View className="mt-2 flex-row flex-wrap gap-2">
+          <View className="mt-3 flex-row flex-wrap gap-2">
             {(["unidad", "kg", "g", "L", "ml"] as const).map((unit) => (
               <Pressable
                 key={unit}
+                accessibilityRole="button"
                 onPress={() => setSaleUnit(unit)}
-                className={`rounded-lg border px-3 py-2 ${saleUnit === unit ? "border-emerald-300 bg-emerald-50" : "border-slate-200"}`}
+                className={`rounded-full px-3 py-2 ${
+                  saleUnit === unit ? "bg-black" : "bg-slate-100"
+                }`}
               >
-                <Text>{unit}</Text>
+                <Text
+                  className={`text-xs font-semibold ${
+                    saleUnit === unit ? "text-white" : "text-slate-700"
+                  }`}
+                >
+                  {unit}
+                </Text>
               </Pressable>
             ))}
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setIntegerOnly((value) => !value)}
+              className="rounded-full bg-slate-100 px-3 py-2"
+            >
+              <Text className="text-xs font-semibold text-slate-700">
+                {integerOnly
+                  ? "Cantidades enteras"
+                  : "Cantidades fraccionadas"}
+              </Text>
+            </Pressable>
           </View>
-          <Pressable
-            onPress={() => setIntegerOnly((value) => !value)}
-            className="mt-2"
-          >
-            <Text>
-              {integerOnly ? "✓ Integer only" : "Fractional quantities allowed"}
-            </Text>
-          </Pressable>
+
           <View className="mt-3 gap-2">
             {globalProducts.map((product) => (
               <Pressable
                 key={product.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected: selectedProductId === product.id }}
                 onPress={() => setSelectedProductId(product.id)}
-                className={`rounded-xl border px-3 py-3 ${selectedProductId === product.id ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}
+                className={`rounded-2xl px-3 py-3 ${
+                  selectedProductId === product.id
+                    ? "bg-slate-900"
+                    : "bg-slate-50"
+                }`}
               >
-                <Text className="text-sm font-semibold text-slate-800">
+                <Text
+                  className={`text-sm font-semibold ${
+                    selectedProductId === product.id
+                      ? "text-white"
+                      : "text-slate-800"
+                  }`}
+                >
                   {product.commercialName}
                 </Text>
-                <Text className="mt-1 text-xs text-slate-500">
-                  Marca: {product.brandName} · Categoría: {product.categoryName}{" "}
-                  · {productLabel(product) || "Presentación no especificada"}
+                <Text
+                  className={`mt-1 text-xs ${
+                    selectedProductId === product.id
+                      ? "text-slate-300"
+                      : "text-slate-500"
+                  }`}
+                >
+                  {product.categoryName} ·{" "}
+                  {catalogPresentationLabel(product) ||
+                    "Presentación no especificada"}
                 </Text>
               </Pressable>
             ))}
@@ -527,73 +522,124 @@ export function ProductsWorkspace({
               />
             ) : null}
           </View>
+
           <Pressable
+            accessibilityRole="button"
             disabled={!selectedProductId || saving}
             onPress={() => void addProduct(selectedProductId)}
-            className="mt-3 min-h-[44px] items-center justify-center rounded-xl bg-emerald-600"
+            className="mt-4 min-h-[56px] items-center justify-center rounded-full bg-black px-5"
           >
-            <Text className="font-semibold text-white">
+            <Text className="text-base font-semibold text-white">
               {saving ? "Agregando..." : "Agregar a mi tienda"}
             </Text>
           </Pressable>
-          <Pressable onPress={() => setCreatingCategory(true)} className="mt-2">
-            <Text>Create category</Text>
-          </Pressable>
-          {creatingCategory ? (
-            <View>
-              <TextInput
-                value={newCategory}
-                onChangeText={setNewCategory}
-                placeholder="Category name"
-                className="rounded-lg border px-3 py-2"
-              />
-              <Pressable onPress={() => void createCategory()}>
-                <Text>Save category</Text>
-              </Pressable>
-            </View>
-          ) : null}
-          <View className="mt-4 border-t border-slate-200 pt-3">
-            <Text className="font-semibold">Add private product</Text>
+
+          <View className="mt-5 border-t border-slate-100 pt-4">
+            <Text className="text-xl font-semibold tracking-tight text-slate-900">
+              Agregar producto propio
+            </Text>
             <TextInput
               value={privateName}
               onChangeText={setPrivateName}
-              placeholder="Product name"
-              className="mt-2 rounded-lg border px-3 py-2"
+              placeholder="Nombre del producto"
+              placeholderTextColor="#94a3b8"
+              className="mt-3 rounded-2xl bg-slate-50 px-4 py-3 text-slate-900"
             />
-            <View className="mt-2 flex-row flex-wrap gap-2">
+            <View className="mt-3 flex-row flex-wrap gap-2">
               {categoriesList.map((category) => (
                 <Pressable
                   key={category.id}
+                  accessibilityRole="button"
+                  accessibilityState={{
+                    selected: privateCategory === category.id,
+                  }}
                   onPress={() => setPrivateCategory(category.id)}
+                  className={`rounded-full px-3 py-2 ${
+                    privateCategory === category.id
+                      ? "bg-black"
+                      : "bg-slate-100"
+                  }`}
                 >
-                  <Text>{category.name}</Text>
+                  <Text
+                    className={`text-xs font-semibold ${
+                      privateCategory === category.id
+                        ? "text-white"
+                        : "text-slate-700"
+                    }`}
+                  >
+                    {category.name}
+                  </Text>
                 </Pressable>
               ))}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setCreatingCategory(true)}
+                className="rounded-full bg-slate-100 px-3 py-2"
+              >
+                <Text className="text-xs font-semibold text-slate-700">
+                  Crear categoría
+                </Text>
+              </Pressable>
             </View>
+            {creatingCategory ? (
+              <View className="mt-3 flex-row gap-2">
+                <TextInput
+                  value={newCategory}
+                  onChangeText={setNewCategory}
+                  placeholder="Nombre de la categoría"
+                  placeholderTextColor="#94a3b8"
+                  className="flex-1 rounded-2xl bg-slate-50 px-4 py-3 text-slate-900"
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void createCategory()}
+                  className="min-h-[44px] items-center justify-center rounded-full border border-slate-200 px-4"
+                >
+                  <Text className="text-sm font-semibold text-slate-900">
+                    Guardar categoría
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
             <Pressable
+              accessibilityRole="button"
               onPress={() => void createPrivateProduct()}
               disabled={saving}
-              className="mt-3 rounded-lg bg-emerald-600 px-3 py-3"
+              className="mt-4 min-h-[56px] items-center justify-center rounded-full bg-black px-5"
             >
-              <Text className="text-white">Save private product</Text>
+              <Text className="text-base font-semibold text-white">
+                Guardar producto propio
+              </Text>
             </Pressable>
           </View>
         </View>
       ) : null}
 
       {tool === "sale" ? (
-        <View className="w-full max-w-xl self-center rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <Text className="text-base font-semibold text-slate-900">
+        <View className="w-full max-w-xl self-center rounded-3xl bg-white p-4 shadow-sm">
+          <Text className="text-xl font-semibold tracking-tight text-slate-900">
             Registrar venta
           </Text>
-          <View className="mt-3 flex-row flex-wrap gap-2">
+          <View testID="sale-products" className="mt-3 flex-row flex-wrap gap-2">
             {products.map((product) => (
               <Pressable
                 key={product.id}
+                accessibilityRole="button"
+                accessibilityState={{
+                  selected: selectedProductId === product.id,
+                }}
                 onPress={() => setSelectedProductId(product.id)}
-                className={`rounded-xl border px-3 py-2 ${selectedProductId === product.id ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}
+                className={`rounded-full px-3 py-2 ${
+                  selectedProductId === product.id ? "bg-black" : "bg-slate-100"
+                }`}
               >
-                <Text className="text-xs font-semibold text-slate-800">
+                <Text
+                  className={`text-xs font-semibold ${
+                    selectedProductId === product.id
+                      ? "text-white"
+                      : "text-slate-800"
+                  }`}
+                >
                   {product.name}
                 </Text>
               </Pressable>
@@ -605,34 +651,41 @@ export function ProductsWorkspace({
             keyboardType="numeric"
             placeholder="Cantidad"
             placeholderTextColor="#94a3b8"
-            className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-slate-900"
+            className="mt-3 rounded-2xl bg-slate-50 px-4 py-3 text-slate-900"
           />
           <Pressable
+            accessibilityRole="button"
             disabled={saving}
             onPress={() => void registerSale()}
-            className="mt-3 min-h-[44px] items-center justify-center rounded-xl bg-emerald-600"
+            className="mt-4 min-h-[56px] items-center justify-center rounded-full bg-black px-5"
           >
-            <Text className="font-semibold text-white">Confirmar venta</Text>
+            <Text className="text-base font-semibold text-white">
+              Confirmar venta
+            </Text>
           </Pressable>
         </View>
       ) : null}
 
-      <InventorySummaryCard {...summary} />
-      <View className="w-full max-w-xl self-center rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <Text className="text-base font-semibold text-slate-900">
-          Buscar y filtrar
-        </Text>
-        <View className="mt-3">
-          <SearchBar value={search} onChangeText={setSearch} />
-        </View>
-        <View className="mt-3">
-          <FilterTabs
-            options={categories}
-            value={categoryFilter}
-            onChange={setCategoryFilter}
-          />
-        </View>
+      {/*
+        The inventory summary replaces the old bordered card AND the two alert
+        cards under the list: they restated these very counts, so the tendero
+        read "3 productos con stock bajo" twice on one screenful.
+      */}
+      <View className="w-full max-w-xl flex-row gap-2 self-center">
+        <StatPill label="Productos" value={summary.total} />
+        <StatPill label="Con stock" value={summary.inStock} />
+        <StatPill label="Stock bajo" value={summary.lowStock} tone="warning" />
+        <StatPill label="Agotados" value={summary.outOfStock} tone="critical" />
       </View>
+
+      <SearchBar value={search} onChangeText={setSearch} />
+      <FilterTabs
+        testID="category-filters"
+        options={categories}
+        value={categoryFilter}
+        onChange={setCategoryFilter}
+      />
+
       {loading ? (
         <Text className="py-6 text-center text-sm text-slate-500">
           Cargando catálogo...
@@ -651,65 +704,79 @@ export function ProductsWorkspace({
         />
       ) : null}
       {!loading && products.length ? (
-        <View className="w-full max-w-xl self-center rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <Text className="text-base font-semibold text-slate-900">
-            Catálogo de mi tienda
-          </Text>
-          <View className="mt-3 gap-3">
-            {Object.entries(grouped).map(([category, list]) => (
-              <View key={category}>
-                <Text className="text-sm font-semibold text-emerald-800">
-                  {category}
-                </Text>
-                <View className="mt-2 gap-2">
-                  {list.map((product) => (
-                    <ProductCard
-                      key={product.id}
-                      product={product}
-                      updating={saving}
-                      onUpdate={(changes) => updateProduct(product.id, changes)}
-                      onRemove={() => removeProduct(product.id)}
-                    />
-                  ))}
-                </View>
-              </View>
-            ))}
-            {!Object.keys(grouped).length ? (
-              <EmptyState
-                title="Sin resultados"
-                message="Prueba con otra categoría o limpia la búsqueda."
-              />
-            ) : null}
-          </View>
+        <View className="w-full max-w-xl gap-3 self-center">
+          {filteredProducts.map((product) => (
+            <ProductCard
+              key={product.id}
+              product={product}
+              updating={saving}
+              expanded={editingProductId === product.id}
+              onOpen={() => router.push(`/product/${product.id}`)}
+              onToggleEdit={() =>
+                setEditingProductId((current) =>
+                  current === product.id ? "" : product.id,
+                )
+              }
+              onUpdate={(changes) => updateProduct(product.id, changes)}
+              onRemove={() => removeProduct(product.id)}
+            />
+          ))}
+          {!filteredProducts.length ? (
+            <EmptyState
+              title="Sin resultados"
+              message="Prueba con otra categoría o limpia la búsqueda."
+            />
+          ) : null}
         </View>
       ) : null}
-      {summary.outOfStock > 0 ? (
-        <AlertCard
-          tone="critical"
-          title="Productos agotados"
-          description={`${summary.outOfStock} productos sin stock.`}
-        />
-      ) : null}
-      {summary.lowStock > 0 ? (
-        <AlertCard
-          tone="warning"
-          title="Stock bajo"
-          description={`${summary.lowStock} productos con stock bajo.`}
-        />
-      ) : null}
+
       {error ? (
-        <View className="w-full max-w-xl self-center rounded-xl border border-rose-200 bg-rose-50 px-3 py-2">
+        <View className="w-full max-w-xl self-center rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
           <Text className="text-sm text-rose-700">{error}</Text>
-          <Pressable onPress={() => void loadCatalog()}>
-            <Text className="mt-2 font-semibold text-rose-800">Retry</Text>
+          <Pressable accessibilityRole="button" onPress={() => void loadCatalog()}>
+            <Text className="mt-2 text-sm font-semibold text-rose-800">
+              Reintentar
+            </Text>
           </Pressable>
         </View>
       ) : null}
       {feedback ? (
-        <View className="w-full max-w-xl self-center rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2">
-          <Text className="text-sm text-cyan-800">{feedback}</Text>
+        <View className="w-full max-w-xl self-center rounded-2xl bg-white px-4 py-3 shadow-sm">
+          <Text className="text-sm text-slate-600">{feedback}</Text>
         </View>
       ) : null}
     </ScrollView>
+  );
+}
+
+function StatPill({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: number;
+  tone?: "neutral" | "warning" | "critical";
+}) {
+  const surface =
+    tone === "critical"
+      ? "bg-rose-50"
+      : tone === "warning"
+        ? "bg-amber-50"
+        : "bg-white";
+  const ink =
+    tone === "critical"
+      ? "text-rose-700"
+      : tone === "warning"
+        ? "text-amber-700"
+        : "text-slate-900";
+
+  return (
+    <View className={`flex-1 items-center rounded-2xl px-2 py-3 ${surface}`}>
+      <Text className={`text-xl font-semibold ${ink}`}>{value}</Text>
+      <Text className="mt-0.5 text-center text-[11px] text-slate-500">
+        {label}
+      </Text>
+    </View>
   );
 }
