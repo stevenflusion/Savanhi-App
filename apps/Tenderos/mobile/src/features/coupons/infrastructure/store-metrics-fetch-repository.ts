@@ -42,10 +42,13 @@ export function createStoreMetricsFetchRepository(
   // Reuse, not duplication: the home tab resolves "your store" through the
   // very method the coupon workspace uses, so the two cannot pick different
   // stores or word the same failure differently.
-  const { listOwnStores } = createCouponsFetchRepository(request);
+  const { listOwnStores, listStoreCoupons, setCouponPaused } =
+    createCouponsFetchRepository(request);
 
   return {
     listOwnStores,
+    listStoreCoupons,
+    setCouponPaused,
 
     readStoreMetrics: (storeId) =>
       readData<StoreMetrics>(

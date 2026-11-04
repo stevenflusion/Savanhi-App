@@ -5,6 +5,7 @@ import type {
   CouponUpdateRequest,
   ImageUploadTicket,
   ImageUploadTicketRequest,
+  StorePhoto,
 } from "@repo/api-contracts";
 
 /**
@@ -19,10 +20,24 @@ export type CouponsResult<T> =
   | { success: true; data: T }
   | { success: false; error: string };
 
-/** The tendero's own store, as the coupon screens need it: a name to show. */
+/**
+ * The tendero's own store, as the coupon screens need it.
+ *
+ * `GET /stores/me` already returns all of this in the one response T2 built
+ * (the photos arrived with the store-photo upload path); the fields are
+ * declared here as OPTIONAL because the coupon workspace only ever needed the
+ * name, and the Home header is what reads the rest — a store registered before
+ * the photo step existed carries none of them.
+ *
+ * No id is ever rendered from this (S11): `id` travels in request paths only.
+ */
 export type CouponStore = {
   id: string;
   name: string;
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  photos?: StorePhoto[];
 };
 
 /**

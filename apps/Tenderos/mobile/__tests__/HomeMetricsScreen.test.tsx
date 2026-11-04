@@ -1,13 +1,14 @@
 process.env.TZ = "America/Bogota";
 
 import type {
+  Coupon,
   CouponRedemptionHistoryEntry,
   CouponRedemptionHistoryPage,
   StoreMetrics,
 } from "@repo/api-contracts";
 import React from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor, within } from "@testing-library/react-native";
 
 import HomeTab from "@/app/(tabs)/index";
 import { HomeMetricsScreen } from "@/src/features/coupons/presentation/screens/HomeMetricsScreen";
@@ -15,10 +16,32 @@ import { HomeMetricsScreen } from "@/src/features/coupons/presentation/screens/H
 const STORE_ID = "11111111-1111-4111-8111-111111111111";
 const METRICS_PATH = `/api/v1/tenderos/stores/${STORE_ID}/metrics`;
 const HISTORY_PATH = `/api/v1/tenderos/stores/${STORE_ID}/redemptions`;
+const COUPONS_PATH = `/api/v1/tenderos/stores/${STORE_ID}/coupons`;
 
 const UUID_PATTERN =
   /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const CLOCK_PATTERN = /\d{1,2}:\d{2}/;
+
+const TODAY = "2026-11-03";
+
+/**
+ * The carousel shows only the coupons that are still ACTIVE today, so the day
+ * the suite is on has to be fixed; and the Home header reads the store's
+ * location through the shared module, which talks to the device's geocoder.
+ * Both are pinned here rather than left to the machine running the tests.
+ */
+jest.mock("@/src/lib/date-only", () => ({
+  ...jest.requireActual("@/src/lib/date-only"),
+  todayDateOnly: () => TODAY,
+}));
+
+const mockReverseGeocodeAsync = jest.fn(async (_coordinates: unknown) => [
+  { city: "Quito", country: "Ecuador", region: "Pichincha", subregion: null, district: null },
+]);
+jest.mock("expo-location", () => ({
+  reverseGeocodeAsync: (coordinates: unknown) =>
+    mockReverseGeocodeAsync(coordinates),
+}));
 
 const mockRequestAuthenticated = jest.fn();
 jest.mock("@/src/features/auth", () => ({
@@ -137,6 +160,48 @@ const historyPage = (
   ...overrides,
 });
 
+const coupon = (overrides: Partial<Coupon> = {}): Coupon => ({
+  id: "22222222-2222-4222-8222-222222222222",
+  storeId: STORE_ID,
+  type: "percentage",
+  title: "15% en lácteos",
+  description: null,
+  freeText: null,
+  percentageValue: 15,
+  fixedAmountValue: null,
+  validFrom: "2026-11-01",
+  validTo: "2026-11-30",
+  totalStock: 40,
+  claimedCount: 7,
+  remainingStock: 33,
+  paused: false,
+  imageUrl: null,
+  products: [
+    {
+      source: "store_catalog",
+      productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "Leche entera 1 L",
+      category: { id: "cat-1", name: "Lácteos", key: "lacteos" },
+    },
+  ],
+  ...overrides,
+});
+
+/** One live coupon, one paused, one already expired. */
+const COUPONS: Coupon[] = [
+  coupon({ id: "33333333-3333-4333-8333-333333333333" }),
+  coupon({
+    id: "44444444-4444-4444-8444-444444444444",
+    title: "2x1 en empanadas",
+    paused: true,
+  }),
+  coupon({
+    id: "55555555-5555-4555-8555-555555555555",
+    title: "Promo de octubre",
+    validTo: "2026-10-31",
+  }),
+];
+
 const ok = (data: unknown) => ({
   success: true,
   response: { json: async () => ({ data }) },
@@ -153,8 +218,16 @@ type Routes = Record<string, unknown>;
 function route(overrides: Routes = {}) {
   const table: Routes = {
     "GET /api/v1/tenderos/stores/me": ok([
-      { id: STORE_ID, name: "Tienda Doña Rosa" },
+      {
+        id: STORE_ID,
+        name: "Tienda Doña Rosa",
+        address: "Av. Amazonas, Quito, Ecuador",
+        latitude: -0.18,
+        longitude: -78.47,
+        photos: [{ id: "photo-1", url: "https://garage.test/store.jpg", contentType: "image/jpeg", position: 0 }],
+      },
     ]),
+    [`GET ${COUPONS_PATH}`]: ok(COUPONS),
     [`GET ${METRICS_PATH}`]: ok(metrics()),
     [`GET ${HISTORY_PATH}?limit=20&offset=5`]: ok(historyPage()),
     ...overrides,
@@ -338,8 +411,16 @@ describe("HomeMetricsScreen states", () => {
     );
   });
 
+  /**
+   * The metrics block still says the store has nothing to measure; the SINGLE
+   * invite to create now lives on the carousel above it, so the screen no
+   * longer shows two black pills for one action (S14).
+   */
   it("points a brand new store at creating its first coupon", async () => {
-    route({ [`GET ${METRICS_PATH}`]: ok(EMPTY_METRICS) });
+    route({
+      [`GET ${METRICS_PATH}`]: ok(EMPTY_METRICS),
+      [`GET ${COUPONS_PATH}`]: ok([]),
+    });
     const screen = render(<HomeMetricsScreen />);
 
     await waitFor(() => expect(screen.getByText("Sin cupones aún")).toBeTruthy());
@@ -348,9 +429,10 @@ describe("HomeMetricsScreen states", () => {
         "Crea tu primer cupón para empezar a medir reclamos y canjes.",
       ),
     ).toBeTruthy();
+    expect(screen.queryByText("Crear cupón")).toBeNull();
 
-    fireEvent.press(screen.getByText("Crear cupón"));
-    expect(mockPush).toHaveBeenCalledWith("/coupons");
+    fireEvent.press(screen.getByText("Crear mi primer cupón"));
+    expect(mockPush).toHaveBeenCalledWith("/coupons?intent=new");
   });
 
   it("shows the Spanish failure and retries from the screen", async () => {
@@ -421,6 +503,185 @@ describe("HomeMetricsScreen states", () => {
       expect(screen.getByText("Marta · 4 nov 2026")).toBeTruthy(),
     );
     expect(screen.getByText("5")).toBeTruthy();
+  });
+});
+
+describe("the Home header (S14)", () => {
+  it("shows the store's photo, its name and where it is", async () => {
+    route();
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Tienda Doña Rosa")).toBeTruthy(),
+    );
+    expect(screen.getByTestId("store-photo").props.source).toEqual({
+      uri: "https://garage.test/store.jpg",
+    });
+    await waitFor(() => expect(screen.getByText("Quito, Ecuador")).toBeTruthy());
+  });
+
+  it("falls back to the store's initial when it has no photo", async () => {
+    route({
+      "GET /api/v1/tenderos/stores/me": ok([
+        { id: STORE_ID, name: "Tienda Doña Rosa" },
+      ]),
+    });
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() => expect(screen.getByTestId("store-initial")).toBeTruthy());
+    expect(screen.getByText("T")).toBeTruthy();
+    expect(screen.queryByTestId("store-photo")).toBeNull();
+  });
+
+  it("offers no notifications, because there are none", async () => {
+    route();
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Tienda Doña Rosa")).toBeTruthy(),
+    );
+    expect(screen.queryByLabelText("Notificaciones")).toBeNull();
+  });
+});
+
+describe("the Home headline and shortcuts (S14)", () => {
+  it("counts the ACTIVE coupons, in the plural", async () => {
+    route({
+      [`GET ${COUPONS_PATH}`]: ok([
+        ...COUPONS,
+        coupon({ id: "66666666-6666-4666-8666-666666666666", title: "Otro" }),
+      ]),
+    });
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() => expect(screen.getByText("Tienes")).toBeTruthy());
+    expect(screen.getByText("2 cupones activos")).toBeTruthy();
+  });
+
+  it("uses the singular for exactly one active coupon", async () => {
+    route();
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() => expect(screen.getByText("Tienes")).toBeTruthy());
+    expect(screen.getByText("1 cupón activo")).toBeTruthy();
+  });
+
+  it("invites a store with nothing live to create its first coupon", async () => {
+    route({ [`GET ${COUPONS_PATH}`]: ok([]) });
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() => expect(screen.getByText("Crea tu")).toBeTruthy());
+    expect(screen.getByText("primer cupón")).toBeTruthy();
+  });
+
+  it("opens the new-coupon form from the round black button", async () => {
+    route();
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("create-coupon-button")).toBeTruthy(),
+    );
+    fireEvent.press(screen.getByTestId("create-coupon-button"));
+
+    expect(mockPush).toHaveBeenCalledWith("/coupons?intent=new");
+  });
+
+  it("offers four shortcuts that all go somewhere that exists", async () => {
+    route();
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() => expect(screen.getByText("Mis cupones")).toBeTruthy());
+
+    const shortcuts: [string, string][] = [
+      ["Escanear cupón", "/scanner"],
+      ["Mis cupones", "/coupons"],
+      ["Revisar inventario", "/products"],
+      ["Agregar producto", "/products?intent=add"],
+    ];
+    for (const [label, target] of shortcuts) {
+      mockPush.mockClear();
+      fireEvent.press(screen.getByText(label));
+      expect(mockPush).toHaveBeenCalledWith(target);
+    }
+  });
+
+  it("does not repeat the round button's own action in the grid", async () => {
+    route();
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() => expect(screen.getByText("Mis cupones")).toBeTruthy());
+    expect(screen.queryByText("Nuevo cupón")).toBeNull();
+  });
+});
+
+describe("the Home carousel of active coupons (S14)", () => {
+  it("carries the active coupons and neither the paused nor the expired one", async () => {
+    route();
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("coupon-highlight-card")).toHaveLength(1),
+    );
+
+    // Scoped to the carousel on purpose: the paused coupon's title also
+    // appears in the funnel and in the history below, which is correct —
+    // those are facts about the past and are not filtered by today.
+    const carousel = within(screen.getByTestId("active-coupons-carousel"));
+    expect(carousel.getByText("15% en lácteos")).toBeTruthy();
+    expect(carousel.queryByText("2x1 en empanadas")).toBeNull();
+    expect(carousel.queryByText("Promo de octubre")).toBeNull();
+  });
+
+  it("shows the coupon's big value and opens its detail", async () => {
+    route();
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() => expect(screen.getByText("-15%")).toBeTruthy());
+
+    fireEvent.press(screen.getByTestId("open-coupon-detail"));
+    expect(mockPush).toHaveBeenCalledWith(
+      "/coupon/33333333-3333-4333-8333-333333333333",
+    );
+  });
+
+  it("draws the category icon when the coupon has no photo", async () => {
+    route();
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("coupon-highlight-icon")).toBeTruthy(),
+    );
+    expect(screen.queryByTestId("coupon-highlight-photo")).toBeNull();
+  });
+
+  it("draws the coupon's own photo when it has one", async () => {
+    route({
+      [`GET ${COUPONS_PATH}`]: ok([
+        coupon({
+          id: "33333333-3333-4333-8333-333333333333",
+          imageUrl: "https://garage.test/coupon.jpg",
+        }),
+      ]),
+    });
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("coupon-highlight-photo")).toBeTruthy(),
+    );
+    expect(screen.queryByTestId("coupon-highlight-icon")).toBeNull();
+  });
+
+  it("offers one card inviting the first coupon when nothing is active", async () => {
+    route({ [`GET ${COUPONS_PATH}`]: ok([]) });
+    const screen = render(<HomeMetricsScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Aún no tienes cupones activos")).toBeTruthy(),
+    );
+    expect(screen.queryByTestId("coupon-highlight-card")).toBeNull();
+
+    fireEvent.press(screen.getByText("Crear mi primer cupón"));
+    expect(mockPush).toHaveBeenCalledWith("/coupons?intent=new");
   });
 });
 

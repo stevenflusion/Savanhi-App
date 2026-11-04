@@ -1,5 +1,5 @@
-import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import type {
+  Coupon,
   CouponRedemptionHistoryEntry,
   StoreMetrics,
 } from "@repo/api-contracts";
@@ -9,16 +9,25 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 
 import { DashboardStatCard } from "@/src/components/DashboardStatCard";
 import { EmptyState } from "@/src/components/EmptyState";
-import { QuickActionsCard } from "@/src/components/QuickActionsCard";
 import { useAuth } from "@/src/features/auth";
+import { todayDateOnly } from "@/src/lib/date-only";
+import { resolveStoreLocationLabel } from "@/src/lib/store-location";
 
+import { selectActiveCoupons } from "../../domain/coupon-status";
 import {
   REDEMPTION_HISTORY_PAGE_SIZE,
   STORE_METRICS_RECENT_REDEMPTIONS,
   createStoreMetricsFetchRepository,
 } from "../../infrastructure/store-metrics-fetch-repository";
+import { ActiveCouponsCarousel } from "../components/ActiveCouponsCarousel";
 import { CouponFunnelCard } from "../components/CouponFunnelCard";
+import { HomeHeader } from "../components/HomeHeader";
+import { HomeHeadline } from "../components/HomeHeadline";
+import { HomeQuickActions } from "../components/HomeQuickActions";
 import { RedemptionTimelineCard } from "../components/RedemptionTimelineCard";
+
+/** Where the round black button and the grid's shortcuts go. */
+const NEW_COUPON_ROUTE = "/coupons?intent=new";
 
 /**
  * The tendero's home tab: what their coupons are actually doing (S9).
@@ -46,7 +55,11 @@ export function HomeMetricsScreen() {
   );
 
   const [storeId, setStoreId] = useState("");
+  const [storeName, setStoreName] = useState("");
+  const [storePhotoUrl, setStorePhotoUrl] = useState<string | null>(null);
+  const [locationLabel, setLocationLabel] = useState("");
   const [storeMissing, setStoreMissing] = useState(false);
+  const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [metrics, setMetrics] = useState<StoreMetrics | null>(null);
   const [redemptions, setRedemptions] = useState<
     CouponRedemptionHistoryEntry[]
@@ -69,20 +82,40 @@ export function HomeMetricsScreen() {
       return;
     }
 
-    const nextStoreId = stores.data[0]?.id ?? "";
+    const store = stores.data[0] ?? null;
+    const nextStoreId = store?.id ?? "";
     setStoreId(nextStoreId);
+    setStoreName(store?.name ?? "");
+    // The first photo is the store's face: `store_photos.position` is the
+    // tendero's own order and the backend returns them in it (T2).
+    setStorePhotoUrl(store?.photos?.[0]?.url ?? null);
     setStoreMissing(!nextStoreId);
     if (!nextStoreId) {
+      setCoupons([]);
       setMetrics(null);
       setRedemptions([]);
       setHasMore(false);
+      setLocationLabel("");
       setLoading(false);
       return;
     }
 
-    const result = await repository.readStoreMetrics(nextStoreId);
+    // The location is resolved beside the reads and never blocks them: a slow
+    // or failing geocoder must not keep the numbers off the screen.
+    void resolveStoreLocationLabel(store).then(setLocationLabel);
+
+    // The metrics are still ONE request for the whole funnel, the totals and
+    // the history preview (T7). The coupon list is the SECOND read the
+    // carousel needs and the summary deliberately does not carry: a card has
+    // to know the photo, the categories, the paused flag and the validity end
+    // date to decide whether a coupon is active and what to draw.
+    const [result, couponList] = await Promise.all([
+      repository.readStoreMetrics(nextStoreId),
+      repository.listStoreCoupons(nextStoreId),
+    ]);
     if (!result.success) {
       setError(result.error);
+      setCoupons([]);
       setMetrics(null);
       setRedemptions([]);
       setHasMore(false);
@@ -90,6 +123,7 @@ export function HomeMetricsScreen() {
       return;
     }
 
+    setCoupons(couponList.success ? couponList.data : []);
     setMetrics(result.data);
     // The history restarts from the summary's own preview on every focus, so
     // a redemption made elsewhere lands at the top instead of behind pages
@@ -130,6 +164,9 @@ export function HomeMetricsScreen() {
   };
 
   const hasCoupons = (metrics?.coupons.length ?? 0) > 0;
+  const activeCoupons = selectActiveCoupons(coupons, todayDateOnly());
+  const openCoupon = (coupon: Coupon) => router.push(`/coupon/${coupon.id}`);
+  const createCoupon = () => router.push(NEW_COUPON_ROUTE);
 
   return (
     <ScrollView
@@ -137,10 +174,24 @@ export function HomeMetricsScreen() {
       contentContainerStyle={{
         paddingHorizontal: 16,
         paddingBottom: 120,
-        gap: 12,
+        gap: 16,
       }}
       showsVerticalScrollIndicator={false}
     >
+      {!loading && !storeMissing ? (
+        <>
+          <HomeHeader
+            storeName={storeName}
+            photoUrl={storePhotoUrl}
+            locationLabel={locationLabel}
+          />
+          <HomeHeadline
+            activeCount={activeCoupons.length}
+            onCreate={createCoupon}
+          />
+        </>
+      ) : null}
+
       {loading ? (
         <Text className="py-6 text-center text-sm text-slate-500">
           Cargando tu tienda...
@@ -209,31 +260,46 @@ export function HomeMetricsScreen() {
 
       {/*
         The shortcuts are navigation, not data, so they stay reachable while
-        the metrics are loading or failing — and they keep the targets they
-        already had, which all still exist in the Productos tab.
+        the metrics are loading or failing. "Nuevo cupón" is NOT among them:
+        the round black button above is that action, and the slot went to a
+        real second target instead of a duplicate.
       */}
       {!loading ? (
-        <QuickActionsCard
+        <HomeQuickActions
           actions={[
-            {
-              id: "coupon",
-              label: "Nuevo cupón",
-              icon: "CPN",
-              onPress: () => router.push("/coupons"),
-            },
             {
               id: "scan",
               label: "Escanear cupón",
-              icon: "QR",
+              icon: "line-scan",
               onPress: () => router.push("/scanner"),
+            },
+            {
+              id: "coupons",
+              label: "Mis cupones",
+              icon: "ticket-outline",
+              onPress: () => router.push("/coupons"),
             },
             {
               id: "inventory",
               label: "Revisar inventario",
-              icon: "STK",
+              icon: "cube-outline",
               onPress: () => router.push("/products"),
             },
+            {
+              id: "add-product",
+              label: "Agregar producto",
+              icon: "plus-box-outline",
+              onPress: () => router.push("/products?intent=add"),
+            },
           ]}
+        />
+      ) : null}
+
+      {!loading && !error && !storeMissing ? (
+        <ActiveCouponsCarousel
+          coupons={activeCoupons}
+          onOpen={openCoupon}
+          onCreate={createCoupon}
         />
       ) : null}
 
@@ -242,26 +308,15 @@ export function HomeMetricsScreen() {
           {hasCoupons ? (
             <CouponFunnelCard coupons={metrics.coupons} />
           ) : (
-            <View className="w-full max-w-xl self-center gap-3">
-              <EmptyState
-                title="Sin cupones aún"
-                message="Crea tu primer cupón para empezar a medir reclamos y canjes."
-              />
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => router.push("/coupons")}
-                className="min-h-[52px] w-full flex-row items-center justify-center gap-2 rounded-full bg-black px-5"
-              >
-                <MaterialCommunityIcons
-                  name="plus"
-                  size={20}
-                  color="#ffffff"
-                />
-                <Text className="text-base font-semibold text-white">
-                  Crear cupón
-                </Text>
-              </Pressable>
-            </View>
+            /*
+              No "Crear cupón" button here any more: the carousel above is
+              already showing its own invite in exactly this state, and two
+              black pills for one action in one screenful is noise.
+            */
+            <EmptyState
+              title="Sin cupones aún"
+              message="Crea tu primer cupón para empezar a medir reclamos y canjes."
+            />
           )}
 
           <RedemptionTimelineCard

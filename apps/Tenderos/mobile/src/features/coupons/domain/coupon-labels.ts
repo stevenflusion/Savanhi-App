@@ -120,6 +120,65 @@ export function couponFunnelLabel(
 }
 
 /**
+ * The same value as `couponValueLabel`, written short enough to be the big
+ * bold line of a card (S14).
+ *
+ * It is Spanish and symbolic rather than English: `-20%` and `-$2.00` are read
+ * as a discount everywhere, while "20% OFF" would put English copy on a screen
+ * whose every other word is Spanish. Free text IS its own value, so it is
+ * shown as the tendero wrote it and truncated by the card, not here.
+ *
+ * A coupon missing its own value field falls back to the type's name, exactly
+ * as `couponValueLabel` does, so a card never renders an empty line.
+ */
+export function couponHighlightValue(coupon: Coupon): string {
+  switch (coupon.type) {
+    case "free_text":
+      return coupon.freeText?.trim() || COUPON_TYPE_LABELS.free_text;
+    case "percentage":
+      return coupon.percentageValue === null
+        ? COUPON_TYPE_LABELS.percentage
+        : `-${coupon.percentageValue}%`;
+    case "fixed_amount":
+      return coupon.fixedAmountValue === null
+        ? COUPON_TYPE_LABELS.fixed_amount
+        : `-$${coupon.fixedAmountValue.toFixed(2)}`;
+    case "combo": {
+      const count = coupon.products.length;
+      if (count < 1) return COUPON_TYPE_LABELS.combo;
+      return count === 1 ? "2x1" : `Combo x${count}`;
+    }
+  }
+}
+
+/**
+ * The Home tab's headline, in two tones: a light lead line and a bold one
+ * under it (S14). It is built from the REAL count of active coupons, so the
+ * screen never claims a number nobody earned.
+ *
+ * The empty case is not a zero. "0 cupones activos" is an accusation; a store
+ * with nothing live is invited to create its first coupon instead, which is
+ * also what the round black button beside it does.
+ */
+export type Headline = {
+  lead: string;
+  emphasis: string;
+};
+
+export function activeCouponsHeadline(activeCount: number): Headline {
+  if (activeCount < 1) {
+    return { lead: "Crea tu", emphasis: "primer cupón" };
+  }
+  return {
+    lead: "Tienes",
+    emphasis:
+      activeCount === 1
+        ? "1 cupón activo"
+        : `${activeCount} cupones activos`,
+  };
+}
+
+/**
  * How a customer with no profile is named. It is the app's wording and not the
  * API's: T6 and T7 deliberately answer `customerName: null` for an
  * OTP-registered user who never filled a name, and inventing one in the
