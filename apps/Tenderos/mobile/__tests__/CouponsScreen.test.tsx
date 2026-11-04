@@ -4,6 +4,18 @@ import type { Coupon } from "@repo/api-contracts";
 import React from "react";
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
 
+/**
+ * The validity window is picked on a calendar now (S13), and a calendar
+ * disables the past, so the day the suite "is on" has to be fixed. It is
+ * pinned to the first day of the window these fixtures use, which keeps every
+ * date in this file exactly what it was before the calendar replaced the two
+ * text inputs.
+ */
+jest.mock("@/src/lib/date-only", () => ({
+  ...jest.requireActual("@/src/lib/date-only"),
+  todayDateOnly: () => "2026-01-01",
+}));
+
 import { CouponsScreen } from "@/src/features/coupons/presentation/screens/CouponsScreen";
 
 const STORE_ID = "11111111-1111-4111-8111-111111111111";
@@ -15,7 +27,17 @@ const mockRequestAuthenticated = jest.fn();
 jest.mock("@/src/features/auth", () => ({
   useAuth: () => ({ requestAuthenticated: mockRequestAuthenticated }),
 }));
+const mockPush = jest.fn();
+/**
+ * The screen now reads where it was opened FROM: the Home tab's round black
+ * button asks for the create form, and the coupon detail's edit action asks
+ * for one stored coupon (S14). The params are per-test, so the mock reads a
+ * variable the test sets.
+ */
+let mockSearchParams: Record<string, string> = {};
 jest.mock("expo-router", () => ({
+  useRouter: () => ({ push: mockPush, back: jest.fn() }),
+  useLocalSearchParams: () => mockSearchParams,
   useFocusEffect: (callback: () => void) =>
     require("react").useEffect(callback, [callback]),
 }));
@@ -130,6 +152,15 @@ const sent = (
   path: string,
 ) => calls.find((call) => call.method === method && call.path === path);
 
+/**
+ * Chooses the fixtures' validity window the way the tendero now does it: two
+ * taps on the calendar, in the month it already opens on (S13).
+ */
+function pickValidity(screen: ReturnType<typeof render>) {
+  fireEvent.press(screen.getByTestId("calendar-day-2026-01-01"));
+  fireEvent.press(screen.getByTestId("calendar-day-2026-01-31"));
+}
+
 async function openForm(screen: ReturnType<typeof render>) {
   await waitFor(() => expect(screen.getByText("Nuevo cupón")).toBeTruthy());
   fireEvent.press(screen.getByText("Nuevo cupón"));
@@ -141,6 +172,71 @@ async function openForm(screen: ReturnType<typeof render>) {
 beforeEach(() => {
   mockRequestAuthenticated.mockReset();
   mockLaunchImageLibraryAsync.mockReset();
+  mockPush.mockReset();
+  mockSearchParams = {};
+});
+
+describe("CouponsScreen navigation (S14)", () => {
+  it("opens the detail when a card is tapped", async () => {
+    route([coupon()]);
+    const screen = render(<CouponsScreen />);
+
+    await waitFor(() => expect(screen.getByText("15% en lácteos")).toBeTruthy());
+    fireEvent.press(screen.getByTestId("coupon-card"));
+
+    expect(mockPush).toHaveBeenCalledWith(`/coupon/${COUPON_ID}`);
+  });
+
+  it("keeps pause and activate reachable from the card itself", async () => {
+    const calls = route([coupon()]);
+    const screen = render(<CouponsScreen />);
+
+    await waitFor(() => expect(screen.getByText("Pausar")).toBeTruthy());
+    fireEvent.press(screen.getByText("Pausar"));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) => call.path === `/api/v1/tenderos/coupons/${COUPON_ID}/pause`,
+        ),
+      ).toBe(true),
+    );
+    // Pausing is not a navigation: it must not open the detail.
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("opens the create form straight away when the Home button sent it", async () => {
+    mockSearchParams = { intent: "new" };
+    route([coupon()]);
+    const screen = render(<CouponsScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText("Título del cupón")).toBeTruthy(),
+    );
+    expect(screen.getByText("Nuevo cupón")).toBeTruthy();
+  });
+
+  it("opens the edit form on the coupon the detail named", async () => {
+    mockSearchParams = { intent: "edit", couponId: COUPON_ID };
+    route([coupon()]);
+    const screen = render(<CouponsScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText("Título del cupón").props.value).toBe(
+        "15% en lácteos",
+      ),
+    );
+    expect(screen.getByText("Editar cupón")).toBeTruthy();
+  });
+
+  it("ignores an intent naming a coupon that is not in the store", async () => {
+    mockSearchParams = { intent: "edit", couponId: "99999999-9999-4999-8999-999999999999" };
+    route([coupon()]);
+    const screen = render(<CouponsScreen />);
+
+    await waitFor(() => expect(screen.getByText("15% en lácteos")).toBeTruthy());
+    expect(screen.queryByPlaceholderText("Título del cupón")).toBeNull();
+  });
 });
 
 describe("CouponsScreen list", () => {
@@ -327,8 +423,7 @@ describe("CouponsScreen create", () => {
       "15% en lácteos",
     );
     fireEvent.changeText(screen.getByPlaceholderText("Descuento (1 a 100)"), "15");
-    fireEvent.changeText(screen.getByPlaceholderText("Desde (AAAA-MM-DD)"), "2026-01-01");
-    fireEvent.changeText(screen.getByPlaceholderText("Hasta (AAAA-MM-DD)"), "2026-01-31");
+    pickValidity(screen);
     fireEvent.changeText(screen.getByPlaceholderText("Stock total"), "40");
     fireEvent.press(screen.getByText("Leche entera 1 L"));
     fireEvent.press(screen.getByText("Guardar cupón"));
@@ -366,8 +461,7 @@ describe("CouponsScreen create", () => {
       screen.getByPlaceholderText("Título del cupón"),
       "Combo del día",
     );
-    fireEvent.changeText(screen.getByPlaceholderText("Desde (AAAA-MM-DD)"), "2026-01-01");
-    fireEvent.changeText(screen.getByPlaceholderText("Hasta (AAAA-MM-DD)"), "2026-01-31");
+    pickValidity(screen);
     fireEvent.changeText(screen.getByPlaceholderText("Stock total"), "10");
     fireEvent.press(screen.getByText("Leche entera 1 L"));
     fireEvent.press(screen.getByText("Empanadas de la casa"));
@@ -402,8 +496,7 @@ describe("CouponsScreen create", () => {
     fireEvent.press(screen.getByText("% de descuento"));
     fireEvent.changeText(screen.getByPlaceholderText("Título del cupón"), "Uno");
     fireEvent.changeText(screen.getByPlaceholderText("Descuento (1 a 100)"), "10");
-    fireEvent.changeText(screen.getByPlaceholderText("Desde (AAAA-MM-DD)"), "2026-01-01");
-    fireEvent.changeText(screen.getByPlaceholderText("Hasta (AAAA-MM-DD)"), "2026-01-31");
+    pickValidity(screen);
     fireEvent.changeText(screen.getByPlaceholderText("Stock total"), "5");
     fireEvent.press(screen.getByText("Leche entera 1 L"));
     fireEvent.press(screen.getByText("Empanadas de la casa"));
@@ -426,8 +519,7 @@ describe("CouponsScreen create", () => {
     fireEvent.press(screen.getByText("% de descuento"));
     fireEvent.changeText(screen.getByPlaceholderText("Título del cupón"), "Sin producto");
     fireEvent.changeText(screen.getByPlaceholderText("Descuento (1 a 100)"), "10");
-    fireEvent.changeText(screen.getByPlaceholderText("Desde (AAAA-MM-DD)"), "2026-01-01");
-    fireEvent.changeText(screen.getByPlaceholderText("Hasta (AAAA-MM-DD)"), "2026-01-31");
+    pickValidity(screen);
     fireEvent.changeText(screen.getByPlaceholderText("Stock total"), "5");
     fireEvent.press(screen.getByText("Guardar cupón"));
 
@@ -441,24 +533,35 @@ describe("CouponsScreen create", () => {
     ).toBeUndefined();
   });
 
-  it("refuses an inverted validity window and says why (S6)", async () => {
+  /**
+   * The inverted window this case used to type is now UNREACHABLE: the
+   * calendar restarts the range when the second tap lands before the start
+   * (S13), so the form can no longer be put in that state from the UI. What
+   * remains reachable is a HALF-chosen window, and that is what must not be
+   * saved. The inverted rule itself still lives in `validateCouponForm` and is
+   * pinned directly in `coupon-form.test.ts`.
+   */
+  it("cannot be put in an inverted validity window at all (S6, S13)", async () => {
     const calls = route([]);
     const screen = render(<CouponsScreen />);
     await openForm(screen);
 
     fireEvent.press(screen.getByText("2x1 / Combo"));
     fireEvent.changeText(screen.getByPlaceholderText("Título del cupón"), "Al revés");
-    fireEvent.changeText(screen.getByPlaceholderText("Desde (AAAA-MM-DD)"), "2026-01-31");
-    fireEvent.changeText(screen.getByPlaceholderText("Hasta (AAAA-MM-DD)"), "2026-01-01");
     fireEvent.changeText(screen.getByPlaceholderText("Stock total"), "5");
     fireEvent.press(screen.getByText("Leche entera 1 L"));
+
+    // Last day first, then an earlier one: the range restarts instead of
+    // inverting, which leaves the window open and the coupon unsaveable.
+    fireEvent.press(screen.getByTestId("calendar-day-2026-01-31"));
+    fireEvent.press(screen.getByTestId("calendar-day-2026-01-01"));
+    expect(screen.getByText("Desde 1 ene 2026 · elige el último día")).toBeTruthy();
+
     fireEvent.press(screen.getByText("Guardar cupón"));
 
     await waitFor(() =>
       expect(
-        screen.getByText(
-          "La vigencia debe empezar antes o el mismo día en que termina.",
-        ),
+        screen.getByText("Usa el formato AAAA-MM-DD en ambas fechas."),
       ).toBeTruthy(),
     );
     expect(
@@ -478,8 +581,7 @@ describe("CouponsScreen create", () => {
 
     fireEvent.press(screen.getByText("2x1 / Combo"));
     fireEvent.changeText(screen.getByPlaceholderText("Título del cupón"), "Combo");
-    fireEvent.changeText(screen.getByPlaceholderText("Desde (AAAA-MM-DD)"), "2026-01-01");
-    fireEvent.changeText(screen.getByPlaceholderText("Hasta (AAAA-MM-DD)"), "2026-01-31");
+    pickValidity(screen);
     fireEvent.changeText(screen.getByPlaceholderText("Stock total"), "5");
     fireEvent.press(screen.getByText("Leche entera 1 L"));
     fireEvent.press(screen.getByText("Guardar cupón"));
@@ -528,8 +630,7 @@ describe("CouponsScreen create", () => {
 
       fireEvent.press(screen.getByText("2x1 / Combo"));
       fireEvent.changeText(screen.getByPlaceholderText("Título del cupón"), "Con foto");
-      fireEvent.changeText(screen.getByPlaceholderText("Desde (AAAA-MM-DD)"), "2026-01-01");
-      fireEvent.changeText(screen.getByPlaceholderText("Hasta (AAAA-MM-DD)"), "2026-01-31");
+      pickValidity(screen);
       fireEvent.changeText(screen.getByPlaceholderText("Stock total"), "5");
       fireEvent.press(screen.getByText("Leche entera 1 L"));
       fireEvent.press(screen.getByText("Agregar foto"));
@@ -573,9 +674,12 @@ describe("CouponsScreen edit", () => {
     expect(screen.getByPlaceholderText("Descuento (1 a 100)").props.value).toBe(
       "15",
     );
-    expect(screen.getByPlaceholderText("Desde (AAAA-MM-DD)").props.value).toBe(
-      "2026-01-01",
-    );
+    // The window is no longer a text field: it is the calendar's own
+    // selection, shown through the shared date-only helper (S13, S11).
+    expect(screen.getByText("1 ene 2026 - 31 ene 2026")).toBeTruthy();
+    expect(
+      screen.getByTestId("calendar-day-2026-01-01").props.accessibilityState,
+    ).toEqual(expect.objectContaining({ selected: true }));
     expect(screen.getByPlaceholderText("Stock total").props.value).toBe("40");
 
     fireEvent.changeText(screen.getByPlaceholderText("Stock total"), "60");

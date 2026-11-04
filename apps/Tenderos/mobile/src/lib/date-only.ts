@@ -91,6 +91,25 @@ export function formatDateOnly(
 }
 
 /**
+ * The device's own calendar day as a date-only string.
+ *
+ * This is the ONE place in the app that reads the clock, and it reads it the
+ * only way that cannot shift the day: `getFullYear`/`getMonth`/`getDate` are
+ * the LOCAL fields of the current instant, so the answer is the day the
+ * tendero is actually living, never a UTC day that is already tomorrow. No
+ * `Date` is ever constructed from a stored string — see the note at the top of
+ * this file for why that distinction matters.
+ */
+export function todayDateOnly(): string {
+  const now = new Date();
+  return [
+    String(now.getFullYear()).padStart(4, "0"),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+/**
  * A validity window as one string. It falls back as a WHOLE when either end is
  * unusable: half a range is more misleading than no range.
  */

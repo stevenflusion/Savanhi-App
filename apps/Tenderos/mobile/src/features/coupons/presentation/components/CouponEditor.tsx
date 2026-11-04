@@ -3,7 +3,10 @@ import type { CouponType } from "@repo/api-contracts";
 import { useState } from "react";
 import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
 
+import { todayDateOnly } from "@/src/lib/date-only";
+
 import { categoryIconFor } from "../../domain/category-icons";
+import { DateRangeCalendar } from "./DateRangeCalendar";
 import {
   allowsMultipleProducts,
   toggleProductSelection,
@@ -165,22 +168,25 @@ export function CouponEditor({
         ) : null}
         <FieldError message={errors.value} />
 
-        <View className="mt-2 flex-row gap-2">
-          <TextInput
-            value={state.validFrom}
-            onChangeText={(value) => set("validFrom", value)}
-            placeholder="Desde (AAAA-MM-DD)"
-            placeholderTextColor="#94a3b8"
-            className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900"
-          />
-          <TextInput
-            value={state.validTo}
-            onChangeText={(value) => set("validTo", value)}
-            placeholder="Hasta (AAAA-MM-DD)"
-            placeholderTextColor="#94a3b8"
-            className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900"
-          />
-        </View>
+        <Text className="mt-3 text-sm font-semibold text-slate-900">
+          Vigencia
+        </Text>
+        <DateRangeCalendar
+          value={{ from: state.validFrom || null, to: state.validTo || null }}
+          onChange={(range) =>
+            onChange({
+              ...state,
+              validFrom: range.from ?? "",
+              validTo: range.to ?? "",
+            })
+          }
+          /*
+           * Creating cannot start in the past; EDITING has no minimum at all,
+           * so a coupon whose window already began keeps its stored start and
+           * can still be re-selected (S13).
+           */
+          minDate={editing ? null : todayDateOnly()}
+        />
         <FieldError message={errors.validity} />
 
         <TextInput
