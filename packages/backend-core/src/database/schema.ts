@@ -697,6 +697,18 @@ export const couponClaims = pgTable(
       .default(sql`current_date`)
       .notNull(),
     redeemedOn: date("redeemed_on", { mode: "string" }),
+    /**
+     * The day the customer gave the coupon back (C4). Nullable, and it is the
+     * WHOLE representation of a released claim: `status` keeps its two stored
+     * values, so `coupon_claims_status_chk` is untouched and no migration has
+     * to remove anything. "Released" is therefore derived on read, exactly as
+     * "expired" is.
+     *
+     * The row survives on purpose — `UNIQUE(coupon_id, customer_user_id)` still
+     * says this customer took this coupon once (S6) — while the reservation it
+     * held is returned to `coupons.claimed_count`.
+     */
+    releasedOn: date("released_on", { mode: "string" }),
     /** The tendero who scanned the QR. */
     redeemedByUserId: uuid("redeemed_by_user_id").references(() => users.id, {
       onDelete: "set null",
@@ -733,6 +745,16 @@ export const couponClaims = pgTable(
       "coupon_claims_redemption_chk",
       sql`(${table.status} = 'redeemed' and ${table.redeemedOn} is not null and ${table.redeemedByUserId} is not null)
         or (${table.status} <> 'redeemed' and ${table.redeemedOn} is null and ${table.redeemedByUserId} is null)`,
+    ),
+    /**
+     * A released claim can never be redeemed and a redeemed claim can never be
+     * released (C4). The route layer answers both with their own 409 before a
+     * statement runs; this is the invariant no statement can bypass, in the
+     * same spirit as `coupons_claimed_within_stock_chk`.
+     */
+    releaseCheck: check(
+      "coupon_claims_release_chk",
+      sql`${table.releasedOn} is null or ${table.status} <> 'redeemed'`,
     ),
   }),
 );

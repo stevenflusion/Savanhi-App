@@ -1,0 +1,2 @@
+ALTER TABLE "coupon_claims" ADD COLUMN "released_on" date;--> statement-breakpoint
+ALTER TABLE "coupon_claims" ADD CONSTRAINT "coupon_claims_release_chk" CHECK ("coupon_claims"."released_on" is null or "coupon_claims"."status" <> 'redeemed');
