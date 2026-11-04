@@ -99,9 +99,9 @@ export function createAuthRouter(
     validateBody(otpVerifySchema),
     async (req, res, next) => {
       try {
-        const { email, challengeId, token } = req.body;
+        const { email, challengeId, token, registrationRole } = req.body;
         const result = await authService.verifyOtp(
-          { email, challengeId, token },
+          { email, challengeId, token, registrationRole },
           requestMeta(req),
         );
         res.status(200).json(result);

@@ -11,6 +11,19 @@ export const AUTH_ROLES = [
 
 export type AuthRole = (typeof AUTH_ROLES)[number];
 
+/**
+ * The roles an app may ask for when its OWN registration creates the account
+ * (C1: “Cada app indica su rol”). Deliberately NOT `AuthRole`: `admin`,
+ * `marca` and `delivery` are stored values no app registers into, and a
+ * registration payload that could name them would be a privilege path.
+ *
+ * The indication applies at account creation and nowhere else, which is why
+ * the field that carries it is called `registrationRole`.
+ */
+export const REGISTRATION_ROLES = ["client", "tendero"] as const;
+
+export type RegistrationRole = (typeof REGISTRATION_ROLES)[number];
+
 export const REGISTRATION_STATUSES = [
   "profile_required",
   "store_required",
@@ -84,6 +97,12 @@ export type OtpVerifyRequest = {
   email: string;
   challengeId: string;
   token: string;
+  /**
+   * Which app is verifying (C1). Optional: absent means the backend process's
+   * own default. It is read ONLY when this verification creates the account —
+   * an existing account always keeps its stored role.
+   */
+  registrationRole?: RegistrationRole;
 };
 
 export type OtpVerifyResponse = AuthResponse & {

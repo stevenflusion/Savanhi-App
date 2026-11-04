@@ -229,7 +229,9 @@ export type ClaimableCouponRecord = CouponRecord & {
  *
  * `status` is the STORED status. `expired` is computed against the coupon
  * calendar day (see `calendar.ts`) in the same query, so the route derives the
- * displayed status without a second clock.
+ * displayed status without a second clock. `released` is the same kind of
+ * derived fact (C4): the row stays `claimed` and carries a `released_on` date,
+ * so the flag travels instead of the date — no new date reaches a screen (S11).
  */
 export type CustomerClaimRecord = {
   id: string;
@@ -237,6 +239,7 @@ export type CustomerClaimRecord = {
   claimedOn: string;
   redeemedOn: string | null;
   expired: boolean;
+  released: boolean;
   coupon: CouponRecord;
   store: { id: string; name: string };
 };

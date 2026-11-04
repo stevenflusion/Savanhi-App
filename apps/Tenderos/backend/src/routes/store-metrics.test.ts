@@ -203,20 +203,36 @@ test("the tendero reads the metrics of a store they own", async (t) => {
    * read from the database on every request, so flipping the row is the whole
    * fixture — the same path the T4, T5 and T6 suites already use.
    */
-  const signInAsCustomer = async (label: string, fullName?: string) => {
+  const signInAsCustomer = async (
+    label: string,
+    fullName = `Cliente ${label}`,
+  ) => {
     const customer = await signIn(label);
     await cleanupDb.pool.query(
       "update users set role_id = (select id from roles where name = 'client') where id = $1",
       [customer.userId],
     );
-    if (fullName !== undefined) {
-      const named = await call("PATCH", "/auth/me", {
-        token: customer.token,
-        body: { fullName },
-      });
-      assert.equal(named.status, 200, await named.clone().text());
-    }
+    // Every customer is named here because C2 gates the claim on it; the one
+    // case about a customer with no name blanks the column after the claim.
+    const named = await call("PATCH", "/auth/me", {
+      token: customer.token,
+      body: { fullName },
+    });
+    assert.equal(named.status, 200, await named.clone().text());
     return customer;
+  };
+
+  /**
+   * Empties a customer's name AFTER their claim exists. C2 makes a nameless
+   * claim impossible to create through the API, but the row is still real:
+   * every claim made before C2 existed belongs to an OTP-registered customer
+   * whose `full_name` is `''`, and the history has to render that absence.
+   * There is no route that empties a name, so the fixture writes the column.
+   */
+  const blankName = async (userId: string) => {
+    await cleanupDb.pool.query("update users set full_name = '' where id = $1", [
+      userId,
+    ]);
   };
 
   const createTendero = async (label: string) => {
@@ -651,6 +667,9 @@ test("the tendero reads the metrics of a store they own", async (t) => {
       on,
     });
   }
+  // Every claim above exists now, so the fourth customer can lose its name:
+  // the history entry it produced is the one that has to read `null` (C2).
+  await blankName(nameless.userId);
 
   await t.test(
     "the history is newest first and shows title, first name and date",
@@ -890,7 +909,10 @@ test("the tendero reads the metrics of a store they own", async (t) => {
         ownerProduct,
         { ...CURRENT, title: `Cupon de preservacion ${runId}` },
       );
-      const taken = await claim(nameless.token, extra.id);
+      // A named customer: the fixture above left `nameless` without one, and
+      // C2 would refuse its claim for that reason instead of proving that the
+      // customer side still reserves and redeems.
+      const taken = await claim(ana.token, extra.id);
       await redeem(owner.token, taken.qrToken);
     },
   );

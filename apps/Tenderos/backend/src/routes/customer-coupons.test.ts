@@ -219,6 +219,14 @@ test("customer coupon routes discover, follow and claim", async (t) => {
       "update users set role_id = (select id from roles where name = 'client') where id = $1",
       [customer.userId],
     );
+    // C2 gates the claim route on the customer having a name, so the fixture
+    // saves one through the real profile route — which is also what the
+    // customer app does right after registering.
+    const named = await call("PATCH", "/auth/me", {
+      token: customer.token,
+      body: { fullName: `Cliente ${label}` },
+    });
+    assert.equal(named.status, 200, await named.clone().text());
     return customer;
   };
 

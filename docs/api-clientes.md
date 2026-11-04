@@ -2,11 +2,11 @@
 
 This is the single reference for building the Savanhi customer app (`client` role). It documents the API **as the code behaves today**, not as the plan describes it.
 
-Every response body and every error message below was captured from a real run of `tenderos-backend` against a throwaway PostgreSQL database on 2026-11-04, with fictional stores, products and customers. Nothing here is hand-written. The `curl` lines use the default development port (`$API=http://localhost:4300`); access tokens, refresh tokens, QR tokens and the presigned image signature are replaced with placeholders.
+Every response body and every error message below was captured from a real run of `tenderos-backend` against a throwaway PostgreSQL database on 2026-11-04, with fictional stores, products and customers — the registration, name, feed and release responses (C1–C4) from a second run on the same day, after those rules landed. Nothing here is hand-written. The `curl` lines use the default development port (`$API=http://localhost:4300`); access tokens, refresh tokens, QR tokens and the presigned image signature are replaced with placeholders.
 
 The customer capability lives inside the Tenderos backend (`apps/Tenderos/backend`) under its own namespace, `/api/v1/clientes`. There is no separate customer service, and there is no customer UI in this repository yet (S2).
 
-- **8 customer routes**, all `requireRole(["client"])`.
+- **9 customer routes**, all `requireRole(["client"])`.
 - **6 auth routes** the app needs, all unauthenticated or any-role.
 - **One response envelope**: `{ "data": … }` for customer routes, `{ "user" }` / `{ "session" }` / `{ "ok" }` for auth.
 
@@ -14,30 +14,38 @@ The customer capability lives inside the Tenderos backend (`apps/Tenderos/backen
 
 ## Read this first: what does not exist yet
 
+Four gaps this document used to list are **closed** — a customer can register itself, a saved name completes its registration, the feed answers without coordinates, and a claim can be released. They are specified in `odd/tasks/clientes-app.md` as C1–C4 and documented below. What is still missing:
+
 | Gap | What it means for the app | Evidence |
 | --- | --- | --- |
-| **A `client` user cannot register.** `apps/Tenderos/backend/src/app.ts` passes `defaultRegistrationRole: "tendero"`, so any new email that verifies an OTP becomes a `tendero`. The decision was deferred to the customer app itself. | Sign-up is **blocked** until this is decided. Today a `client` exists only because its `users.role_id` was set by hand — the same fixture the backend test suites use. | `app.ts:12`, task log L10/L11 |
-| No role choice at OTP verification, and no per-app registration context. | The customer app needs either its own backend process with `defaultRegistrationRole: "client"`, or a role parameter in the auth flow. Neither exists. | `packages/backend-core/src/auth/service.ts:67` |
-| `POST /auth/registration/complete` is `requireAuth(["tendero"])` and creates a **store**. | There is no customer-side "complete your profile" endpoint. The only profile write a customer has is `PATCH /auth/me` with `fullName`. | `packages/backend-core/src/auth/router.ts:137` |
-| **`registrationStatus` has no customer-reachable end state.** `PATCH /auth/me` moves `profile_required` → `store_required`, and only the tendero-only route reaches `completed`. | A customer who saves their name is stuck in `store_required` forever (verified). Ignore the field in the customer app and model onboarding locally. | `users.repository.ts:76` |
-| No pagination on the feed or the wallet. | `GET /coupons/feed` and `GET /claims` return **everything**, always. No `limit`, no `offset`, no cursor. Plan for client-side windowing and for the payload growing. | `routes/index.ts:1136`, `routes/index.ts:1218` |
-| No single-coupon read for a customer. | There is no `GET /api/v1/clientes/coupons/:id`. A coupon is only ever reachable embedded in a feed item or in a claim, so a deep link must re-read the feed (which needs coordinates) or the wallet. | route inventory below |
-| No store detail, and no store photos for a customer. | A customer only ever sees `{ id, name, address, latitude, longitude }` (+ distance). The store photos uploaded by the tendero are exposed **only** on `GET /api/v1/tenderos/stores/me`. | `CustomerStore` in `packages/api-contracts/src/coupons.ts:477` |
-| The followed-stores list carries **no distance**. | `GET /stores/followed` returns `CustomerStore` without `distanceMeters`/`distanceKm`. Distance for followed stores is only available inside the feed. | `routes/index.ts:1069` |
-| No product browsing for customers. | The catalog routes are all `requireRole(["tendero"])`. A customer only sees the product references embedded in a coupon. | `routes/index.ts:345` |
-| No way to cancel or release a claim. | A claim reserves stock permanently. There is no `DELETE /claims/:id`, so a customer who claimed by mistake blocks one unit until the coupon expires. | route inventory below |
+| `POST /auth/registration/complete` is `requireAuth(["tendero"])` and creates a **store**. | There is no customer-side "complete your profile" endpoint, and a customer does not need one: `PATCH /auth/me` with `fullName` is the whole customer profile step and it reaches `completed` (C2). | `packages/backend-core/src/auth/router.ts:137` |
+| **One email is one account and one role.** An address that already registered through the tendero app stays a `tendero` for ever; the customer app's indication cannot change it (C1). | Signing in with such an address succeeds and then answers `403` on every customer route. Word that dead end — "este correo ya tiene una cuenta de tienda" — instead of retrying the sign-in. | C1 below |
+| No pagination on the feed or the wallet. | `GET /coupons/feed` and `GET /claims` return **everything**, always. No `limit`, no `offset`, no cursor. Plan for client-side windowing and for the payload growing. | `routes/index.ts`, the two customer read routes |
+| No single-coupon read for a customer, and **no deep links in the MVP** (C5). | There is no `GET /api/v1/clientes/coupons/:id`. A coupon is only ever reachable embedded in a feed item or in a claim. Sharing a coupon by link was decided OUT of the MVP, so nothing has to open one. | route inventory below |
+| No store detail, and no store photos for a customer. | A customer only ever sees `{ id, name, address, latitude, longitude }` (+ distance). The store photos uploaded by the tendero are exposed **only** on `GET /api/v1/tenderos/stores/me`. | `CustomerStore` in `packages/api-contracts/src/coupons.ts:499` |
+| The followed-stores list carries **no distance**. | `GET /stores/followed` returns `CustomerStore` without `distanceMeters`/`distanceKm`. Distance for followed stores is only available inside the feed. | `routes/index.ts:1092` |
+| No product browsing for customers. | The catalog routes are all `requireRole(["tendero"])`. A customer only sees the product references embedded in a coupon. | `routes/index.ts:436` |
+| A released claim can **never** be claimed again (C4). | The claim row stays and `UNIQUE(coupon, customer)` still holds, so releasing is final for that coupon: the re-claim is a `409`. Confirm the release in the UI; it is not an undo. | C4 below |
 | No session list and no "sign out everywhere". | `POST /auth/logout` revokes **only** the session behind the access token you send. | `service.ts:723` |
 | No notifications of any kind. | Nothing pushes "the store you follow published a coupon" or "your coupon expires tomorrow". There is no device-token endpoint. | repository-wide: no push dependency, no route |
 | Rate limiting is per-process, in memory. | Two backend replicas have two independent counters. Treat the documented limits as a floor, not a contract. | `BACKENDS.md` §Rate limiting, `middleware/rate-limit.ts` |
-| Order and delivery capabilities are frozen. | Every order/delivery path answers `404`. The cuponera MVP is coupons only (S12). | `routes/index.ts:1263` |
+| Order and delivery capabilities are frozen. | Every order/delivery path answers `404`. The cuponera MVP is coupons only (S12). | `routes/index.ts:1322` |
 
-### Open product questions the customer app must answer first
+### The five product questions, and how they were answered
 
-1. **How does a customer register?** Separate backend process with `defaultRegistrationRole: "client"`, or a role chosen during OTP verification? (L11 deferred this to exactly this work.)
-2. **Does a customer need a name before claiming?** `fullName` is `""` after OTP verification, and the tendero's scanner shows `customerName: null` for it — the counter then has no name to confirm against.
-3. **Deep links.** With no single-coupon endpoint, how does a shared coupon open? (Needs either a new endpoint or a feed re-read with coordinates.)
-4. **Claim mistakes.** Is "release my claim" a product requirement? Today stock is reserved until the validity ends.
-5. **Discovery without permission.** The feed *requires* coordinates. What does the app show when location permission is denied — only followed stores (which needs a feed call with a fake point, and no endpoint exists for that), or an empty state?
+The questions this document used to open with were decided on 2026-11-04 (`odd/tasks/clientes-app.md`, L2):
+
+1. **How does a customer register?** Each app says which role it is creating: `POST /auth/otp/verify` takes an optional `registrationRole` of `client` or `tendero` (C1).
+2. **Does a customer need a name before claiming?** Yes, at registration: a `client` is `profile_required` until it saves a `fullName`, and the claim route refuses a nameless customer (C2).
+3. **Deep links.** Out of the MVP (C5). Nothing has to open a shared coupon, so the missing single-coupon endpoint is no longer blocking anything.
+4. **Claim mistakes.** A customer can release a claim, which puts the unit back (C4) — but it cannot take that coupon again.
+5. **Discovery without permission.** Followed stores, and ask for the permission: the feed answers with no coordinates at all (C3).
+
+### What the app still has to decide for itself
+
+- Whether to keep asking for the location permission after a refusal, and where the "activar ubicación" affordance lives — the API only decides what the feed answers in each case.
+- The Spanish wording for every new `409` below. The tendero's own app falls back to a generic Spanish sentence for a message it does not know yet (`coupon-errors.ts`), so the four new ones (`Add your name…` and the three release ones) are not yet translated anywhere.
+- Whether releasing needs a confirmation step. The API makes it final for that coupon (C4), which argues for one.
 
 ---
 
@@ -60,10 +68,17 @@ curl -s -X POST "$API/auth/otp/request" \
 
 curl -s -X POST "$API/auth/otp/verify" \
   -H 'content-type: application/json' \
-  -d '{"email":"camila.cliente@example.test","challengeId":"38e3081d-…","token":"123456"}'
+  -d '{"email":"camila.cliente@example.test","challengeId":"38e3081d-…","token":"123456","registrationRole":"client"}'
 # { "user": {...}, "session": { "accessToken": "<access-token>", "refreshToken": "<refresh-token>", "expiresIn": 900 }, "isNewUser": false }
 
 TOKEN=<access-token>
+```
+
+```bash
+# 2b. first run only: a new account is `profile_required` and cannot claim yet
+curl -s -X PATCH "$API/auth/me" -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"fullName":"Camila Vega"}'
+# {"user":{… ,"role":"client","registrationStatus":"completed"}}
 ```
 
 ```bash
@@ -77,6 +92,10 @@ curl -s -X POST "$API/api/v1/clientes/coupons/462a7c0b-…/claims" \
 
 # 5. the wallet, afterwards
 curl -s "$API/api/v1/clientes/claims" -H "authorization: Bearer $TOKEN"
+
+# 6. gave it back? release it and the unit returns to the coupon's stock
+curl -s -X POST "$API/api/v1/clientes/claims/55eac512-…/release" \
+  -H "authorization: Bearer $TOKEN"
 ```
 
 Every call after step 2 sends `Authorization: Bearer <accessToken>`. The access token lives **900 seconds**; refresh it with `POST /auth/refresh` before it dies (see [Flows](#flows)).
@@ -109,7 +128,7 @@ Every call after step 2 sends `Authorization: Bearer <accessToken>`. The access 
 | `401` | No access token, or an expired/revoked/garbage one. Also a wrong or expired OTP code, and an invalid refresh token. |
 | `403` | Authenticated but not allowed: wrong role, a disabled account on OTP request, or someone else's claim. |
 | `404` | The thing does not exist (store, coupon, claim), or the route does not exist. |
-| `409` | The request is well formed and conflicts with **stored state**: already claimed, out of stock, paused, store deactivated, outside validity, already redeemed, no longer valid. |
+| `409` | The request is well formed and conflicts with **stored state**: already claimed, out of stock, paused, store deactivated, outside validity, already redeemed, no longer valid, no name on the account, already released. |
 | `413` | An image upload ticket asked for more than 5 MiB (tendero-only path). |
 | `429` | Rate limited. `Retry-After` header + `details.retryAfterSeconds`. |
 | `500` | Unexpected failure. `502` appears for impossible-state assertions (e.g. a row that should exist). |
@@ -189,13 +208,47 @@ Keep `challengeId`: the verify call needs it. `cooldownSeconds` is how long "Res
 
 ### `POST /auth/otp/verify`
 
-Exchanges the code for a session. **Unauthenticated.** Creates the user on first verification — today with role `tendero` (see [gaps](#read-this-first-what-does-not-exist-yet)).
+Exchanges the code for a session. **Unauthenticated.** Creates the user on first verification, with the role the calling app asks for (C1).
 
 | Field | Type | Rules |
 | --- | --- | --- |
 | `email` | string | valid email, same address the code was sent to |
 | `challengeId` | string | UUID from the request step |
 | `token` | string | the code, min length 1 |
+| `registrationRole` | `"client" \| "tendero"` | **optional.** Which app is registering. Read **only** when this verification creates the account; absent means the backend process's own default (`tendero` in `apps/Tenderos/backend`). |
+
+#### The registration role (C1)
+
+The customer app sends `registrationRole: "client"` on every verify. Three rules make that safe to send always:
+
+1. **It applies at account creation and nowhere else.** An existing account keeps its stored role, and no statement in the auth service writes `role_id` of a user that already exists. Sending it for a returning customer is a no-op.
+2. **The set is closed to the two app roles.** `admin`, `marca` and `delivery` are stored values no app registers into, so they are rejected by the schema — before any statement runs, which is why a refused registration leaves no account behind:
+
+   ```text
+   400 {"error":"Invalid request payload.","details":{"formErrors":[],"fieldErrors":{"registrationRole":["Invalid option: expected one of \"client\"|\"tendero\""]}}}
+   ```
+
+3. **One email is one account and one role.** An address registered through the tendero app answers `200` with `role: "tendero"` and `isNewUser: false`, whatever the indication says — and then `403` on every customer route. There is no upgrade, no second role and no merge.
+
+**200** — the first verification of an unknown email with `registrationRole: "client"`, verbatim:
+
+```json
+{
+  "user": {
+    "id": "3eb582c2-7c8a-4886-b108-f2c173b4ae20",
+    "email": "camila.cliente@example.test",
+    "fullName": "",
+    "role": "client",
+    "active": true,
+    "emailVerifiedAt": "2026-11-04T14:58:11.849Z",
+    "registrationStatus": "profile_required"
+  },
+  "session": { "accessToken": "<access-token>", "refreshToken": "<refresh-token>", "expiresIn": 900 },
+  "isNewUser": true
+}
+```
+
+`registrationStatus: "profile_required"` is the state C2 requires a name out of, and `isNewUser: true` is the signal to show the name step.
 
 **200** — a **returning** customer (verbatim, tokens replaced):
 
@@ -219,7 +272,7 @@ Exchanges the code for a session. **Unauthenticated.** Creates the user on first
 }
 ```
 
-**200** — the **first-ever** verification of an unknown email, verbatim. Read `role` carefully: this is gap 1 in practice.
+**200** — the **first-ever** verification of an unknown email with **no** `registrationRole`, verbatim. The role is the backend process's default, which is what keeps the tendero app working unchanged:
 
 ```json
 {
@@ -241,7 +294,7 @@ Exchanges the code for a session. **Unauthenticated.** Creates the user on first
 
 | Status | Body | When |
 | --- | --- | --- |
-| `400` | `{"error":"Invalid request payload.", …}` | missing field, non-UUID `challengeId` |
+| `400` | `{"error":"Invalid request payload.", …}` | missing field, non-UUID `challengeId`, a `registrationRole` outside `client`/`tendero` |
 | `401` | `{"error":"Incorrect verification code.","code":"incorrect_code"}` | wrong code |
 | `401` | `{"error":"Verification code expired. Request a new code.","code":"expired_code"}` | unknown/expired/consumed/locked challenge |
 | `403` | `{"error":"Account is disabled."}` | `users.active = false` |
@@ -266,21 +319,21 @@ curl -s "$API/auth/me" -H "authorization: Bearer $TOKEN"
 
 ### `PATCH /auth/me`
 
-The only profile write a customer has. **Any role**, bearer required.
+The only profile write a customer has, and the step that **completes a customer's registration** (C2). **Any role**, bearer required.
 
 | Field | Type | Rules |
 | --- | --- | --- |
-| `fullName` | string | min length 1 |
+| `fullName` | string | min length 1. A whitespace-only name passes this check but does **not** satisfy the claim route — see below. |
 
 ```bash
 curl -s -X PATCH "$API/auth/me" -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"fullName":"Camila Vega Ortiz"}'
 ```
 
-**200** — the full user, with `fullName` updated:
+**200** — the full user, with `fullName` updated and the registration **completed**, verbatim:
 
 ```json
-{"user":{"id":"26177d19-…","email":"camila.cliente@example.test","fullName":"Camila Vega Ortiz","role":"client","active":true,"emailVerifiedAt":"2026-11-04T14:07:14.965Z","registrationStatus":"completed"}}
+{"user":{"id":"3eb582c2-7c8a-4886-b108-f2c173b4ae20","email":"camila.cliente@example.test","fullName":"Camila Vega","role":"client","active":true,"emailVerifiedAt":"2026-11-04T14:58:11.849Z","registrationStatus":"completed"}}
 ```
 
 | Status | Body |
@@ -288,7 +341,9 @@ curl -s -X PATCH "$API/auth/me" -H "authorization: Bearer $TOKEN" \
 | `400` | `{"error":"Invalid request payload.","details":{"formErrors":[],"fieldErrors":{"fullName":["Too small: expected string to have >=1 characters"]}}}` |
 | `401` | as `GET /auth/me` |
 
-> **`registrationStatus` moves to a dead end.** This route advances `profile_required` → `store_required` (a `case` in `users.repository.ts:76`), and only the tendero-only `registration/complete` route can reach `completed`. Verified on a real `client`: after one `PATCH /auth/me` the user reads `{"fullName":"Andrés Pazmiño","registrationStatus":"store_required"}`, and a second write leaves it there. So a customer who sets their name is permanently `store_required` — the customer app must **ignore `registrationStatus`** and track onboarding completion itself until registration is designed.
+> **`registrationStatus` now has a customer end state (C2).** For a `client`, this route advances `profile_required` → `completed` in one step: a customer has no store to create, so there is nothing between its name and a finished registration. A second write never degrades it. For every other role the old path is untouched — a `tendero` still goes `profile_required` → `store_required` here and reaches `completed` only through the tendero-only `registration/complete` route. The customer app can therefore trust `registrationStatus`: `profile_required` means "ask for the name", `completed` means "done".
+>
+> The **claim** route is where the name is enforced, not this one. `fullName` only has to be one character here, and a whitespace-only name would leave the tendero's scanner with no name to read, so the claim route tests for a renderable name instead (see route 6). The validation of this route is shared with the tendero's own auth flow and is deliberately left alone.
 
 ### `POST /auth/refresh`
 
@@ -341,7 +396,7 @@ Afterwards the access token is `401 Invalid or expired access token.` and its re
 
 ## Customer endpoints
 
-All eight require `Authorization: Bearer <accessToken>` with role `client`.
+All nine require `Authorization: Bearer <accessToken>` with role `client`.
 
 Shared failures, identical on every one of them:
 
@@ -453,8 +508,15 @@ Unlike follow, this does **not** require the store to be active: a customer must
 
 | Parameter | In | Type | Rules |
 | --- | --- | --- | --- |
-| `lat` | query | decimal string | required, `-90 … 90` |
-| `lng` | query | decimal string | required, `-180 … 180` |
+| `lat` | query | decimal string | **optional**, `-90 … 90`. Required when `lng` is sent. |
+| `lng` | query | decimal string | **optional**, `-180 … 180`. Required when `lat` is sent. |
+
+The pair is all-or-nothing (C3): both, or neither. Half a position is a `400`, because the missing axis has no honest value to stand in for it:
+
+```text
+GET /api/v1/clientes/coupons/feed?lat=4.711
+400 {"error":"Invalid request payload.","details":{"formErrors":["Latitude and longitude travel together."],"fieldErrors":{}}}
+```
 
 "Claimable" is evaluated in the database: not paused, today inside `[validFrom, validTo]` (inclusive, in the `America/Bogota` calendar), and `claimedCount < totalStock`. An inactive store's coupons never appear.
 
@@ -537,9 +599,42 @@ After claiming, the same feed shows `claimed: true` and the reduced stock (same 
 
 > Note what left that list: the exhausted coupon (`remainingStock 0`) and the one whose window was moved into the past. The feed only ever shows what is claimable **today**.
 
+#### Without coordinates: the followed half (C3)
+
+Send **no query string at all** when the location permission was denied. The answer is the same shape — one list of `CustomerCouponFeedItem` — holding the claimable coupons of the customer's followed stores only, each with `followed: true` and no distance. Verbatim, one item (the coupon object projected):
+
+```json
+{
+  "data": [
+    {
+      "coupon": { "title": "15% en arroz Campo Lindo", "totalStock": 40, "remainingStock": 40, "paused": false },
+      "store": {
+        "id": "a670d4ac-6e79-4066-9e63-4365c950d965",
+        "name": "Minimarket El Vecino",
+        "address": null,
+        "latitude": 4.761,
+        "longitude": -74.0729,
+        "distanceMeters": null,
+        "distanceKm": null
+      },
+      "followed": true,
+      "claimed": false
+    }
+  ]
+}
+```
+
+Three consequences for the screen:
+
+1. **A customer who follows nothing gets `[]`.** That empty state is the place to ask for the permission — the decision was "seguidas + pedir permiso", not "seguidas instead of permission".
+2. `distanceMeters` and `distanceKm` are `null` for **every** item, including stores that do have coordinates: nothing is measurable from nowhere. Render "sin distancia", never "0 km".
+3. Nothing nearby appears. A non-followed store 200 m away is absent, which is the honest answer and not a bug to work around.
+
+The coordinate grammar is unchanged when the pair **is** sent: a blank, a space, a lone sign, `1e1` or `0x10` are all still `400` before any conversion. `.optional()` admits an absent parameter, never an empty one.
+
 | Status | Body | When |
 | --- | --- | --- |
-| `400` | `{"error":"Invalid request payload.", …}` | any coordinate problem or an extra parameter |
+| `400` | `{"error":"Invalid request payload.", …}` | exactly one coordinate, a coordinate problem, or an extra parameter |
 | `502` | `{"error":"Unable to read the coupon feed."}` | internal assembly failure (should be unreachable) |
 
 ### 6. `POST /api/v1/clientes/coupons/:couponId/claims`
@@ -599,7 +694,7 @@ No body.
 }
 ```
 
-**Store `qrToken` immediately and securely** (Keychain / Keystore, never plain `AsyncStorage`, never a log). Only its SHA-256 hash is kept server-side, so the plaintext cannot be read back — losing it means re-issuing (route 8), which invalidates the one you lost.
+**Store `qrToken` immediately and securely** (Keychain / Keystore, never plain `AsyncStorage`, never a log). Only its SHA-256 hash is kept server-side, so the plaintext cannot be read back — losing it means re-issuing (route 9), which invalidates the one you lost.
 
 Every rejection leaves stock and counters **unchanged**:
 
@@ -610,11 +705,16 @@ Every rejection leaves stock and counters **unchanged**:
 | `409` | `{"error":"This store is deactivated and is not accepting new claims."}` | the owning store is inactive (checked first) |
 | `409` | `{"error":"This coupon is paused and is not accepting new claims."}` | `paused = true` |
 | `409` | `{"error":"This coupon is not valid today."}` | today is outside `[validFrom, validTo]` |
+| `409` | `{"error":"Add your name before claiming a coupon."}` | the customer's stored `fullName` has no non-whitespace character (C2) |
 | `409` | `{"error":"You have already claimed this coupon."}` | once per customer per coupon |
+| `409` | `{"error":"You already released this coupon and cannot claim it again."}` | the customer released this very coupon (C4) |
 | `409` | `{"error":"This coupon is out of stock."}` | `claimedCount = totalStock` (concurrency-safe: the loser of a race gets this) |
 | `502` | `{"error":"Unable to create the claim."}` / `{"error":"Unable to read the claim."}` | internal failure |
 
+The name check is the customer's own precondition and is evaluated **inside** the claim transaction, before the reservation, so a refused claim leaves `claimedCount` and the stored claim count untouched (verified). Gate the claim button on `registrationStatus === "completed"` and this `409` never surfaces.
+
 ### 7. `GET /api/v1/clientes/claims`
+
 
 The wallet: every claim of this customer, newest first. No parameters, **no pagination**.
 
@@ -630,13 +730,62 @@ The wallet: every claim of this customer, newest first. No parameters, **no pagi
 
 Each entry carries the **full** `coupon` object (same 16 keys as in the feed) and a minimal `store` of `{ id, name }` — the wallet tells the customer *where* to redeem, not how far away it is.
 
+A released claim appears here too, with `status: "released"` and `qrToken: null` (verbatim capture in route 8 below).
+
 `expired` is **derived on read**, never stored: the first entry's row still says `claimed` in the database (verified), and it reads `expired` only because `validTo` is in the past. Three consequences for the app:
 
 1. Status is a function of today. A screen left open overnight can be wrong; re-read on focus.
 2. Never cache `status` as a fact about the claim.
 3. The server is the only authority on expiry — do not compute it from `validTo` in a different timezone (see the calendar rule below).
 
-### 8. `POST /api/v1/clientes/claims/:claimId/qr`
+### 8. `POST /api/v1/clientes/claims/:claimId/release`
+
+Gives one of **your own** claims back (C4): the reserved unit returns to the coupon's stock and the QR stops working. Nothing is deleted — the claim row stays, which is why this is a POST on a sub-resource and not a `DELETE`.
+
+| Parameter | In | Type |
+| --- | --- | --- |
+| `claimId` | path | UUID |
+
+No body. The answer is `200` and not `201`: the claim already existed and this call transitions it.
+
+**200** — the same `CustomerClaim` shape, now `released` (coupon object projected; `claimedCount` and `remainingStock` already reflect the returned unit):
+
+```json
+{
+  "data": {
+    "id": "74083851-f4d8-4607-86ee-ccf5c7617ebb",
+    "status": "released",
+    "qrToken": null,
+    "claimedOn": "2026-11-04",
+    "redeemedOn": null,
+    "coupon": { "title": "20% en galletas Sol de Oro", "totalStock": 50, "claimedCount": 0, "remainingStock": 50 },
+    "store": { "id": "9769f5f3-fc6b-4487-bcbd-5657614e58fc", "name": "Tienda Doña Rosa" }
+  }
+}
+```
+
+What the release does, all in one transaction with the claim row locked:
+
+1. `claimedCount` goes **down by one**, exactly once. Three parallel releases of one claim answer one `200` and two `409`, and the counter moves once (verified).
+2. The QR dies. The tendero's preview, the redemption and the re-issue below all answer `409 {"error":"This claim was released and is no longer valid."}` (all three verified).
+3. The claim stays in the wallet reading `status: "released"`, `qrToken: null`. It is **not** hidden: a claim that silently disappeared would read as a bug, and the re-claim refusal would have nothing to point at.
+4. **The coupon cannot be taken again by this customer.** `UNIQUE(coupon, customer)` still holds, so a second claim is `409 {"error":"You already released this coupon and cannot claim it again."}`. Another customer can take the unit immediately.
+5. A release racing a redemption has exactly one winner — both take the same row lock and both carry their precondition in their own `UPDATE`.
+
+| Status | Body | When |
+| --- | --- | --- |
+| `400` | `{"error":"Invalid request payload.","details":{"formErrors":[],"fieldErrors":{"claimId":["Invalid UUID"]}}}` | `claimId` is not a UUID |
+| `404` | `{"error":"Claim not found."}` | no such claim |
+| `403` | `{"error":"This claim belongs to another customer."}` | the claim exists but is someone else's |
+| `409` | `{"error":"This claim was already released."}` | released before (idempotency is deliberately **not** a silent success) |
+| `409` | `{"error":"This claim has already been redeemed."}` | already redeemed — there is nothing to give back |
+| `409` | `{"error":"This coupon is no longer valid."}` | past `validTo`: the validity end date already took it out of circulation |
+
+A paused coupon and a deactivated store are deliberately **not** checked here, the same way the redemption does not check them: both block new claims only, and refusing a release would trap the customer in a coupon they can neither use nor give back.
+
+> Treat this as **final, not undo**. Confirm it in the UI ("¿Devolver este cupón? No podrás volver a reclamarlo"), because the only way back is another customer taking that unit.
+
+### 9. `POST /api/v1/clientes/claims/:claimId/qr`
 
 Re-issues the QR of one of **your own** claims. Use it when the stored token was lost (reinstall, new device, cleared storage).
 
@@ -660,6 +809,7 @@ No body.
 | `404` | `{"error":"Claim not found."}` | no such claim |
 | `403` | `{"error":"This claim belongs to another customer."}` | the claim exists but is someone else's |
 | `409` | `{"error":"This claim has already been redeemed."}` | already redeemed (also the race winner's answer) |
+| `409` | `{"error":"This claim was released and is no longer valid."}` | released (C4) — there is no QR to re-issue |
 | `409` | `{"error":"This coupon is no longer valid."}` | past `validTo` |
 
 ---
@@ -737,8 +887,8 @@ None of them carries a creation timestamp, the owner, or bank fields — the ten
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `id` | string (UUID) | never rendered; needed for the QR re-issue |
-| `status` | `"claimed" \| "redeemed" \| "expired"` | `expired` is derived, never stored |
+| `id` | string (UUID) | never rendered; needed for the QR re-issue and the release |
+| `status` | `"claimed" \| "redeemed" \| "expired" \| "released"` | `expired` and `released` are both derived, never stored |
 | `qrToken` | string \| null | non-null **only** on `POST …/claims` and `POST …/claims/:id/qr` |
 | `claimedOn` | string | `YYYY-MM-DD` |
 | `redeemedOn` | string \| null | `YYYY-MM-DD`, null until redeemed |
@@ -752,8 +902,18 @@ None of them carries a creation timestamp, the owner, or bank fields — the ten
 | `claimed` | yes | reserved, not yet redeemed, still inside the validity window | `POST …/claims` |
 | `redeemed` | yes | the tendero scanned the QR; `redeemedOn` is set | tendero's `POST /api/v1/tenderos/coupon-redemptions` |
 | `expired` | **no — derived** | stored status is `claimed` and `validTo < today` | the calendar day moving past `validTo` |
+| `released` | **no — derived** | stored status is `claimed` and the row carries a `released_on` date | `POST …/claims/:id/release` |
 
 An expired claim can never be redeemed and can never get a new QR, and nothing ever flips it back. From the tendero's metrics it still counts as *claimed* (it happened) and never as *redeemed*.
+
+A **released** claim is the opposite: from the tendero's metrics it counts as neither. Captured before and after one release of a coupon with `totalStock: 50` and one claim:
+
+```json
+{ "title": "20% en galletas Sol de Oro", "claimedCount": 1, "redeemedCount": 0, "remainingStock": 49 }
+{ "title": "20% en galletas Sol de Oro", "claimedCount": 0, "redeemedCount": 0, "remainingStock": 50 }
+```
+
+It never appears in the redemption history either, and `released` wins over `expired` in the wallet: the release is why the claim ended, whatever the window later says. The `released_on` date is kept in the database and deliberately **not** in the response — the wallet needs the fact, and no new date reaches a screen (S11).
 
 ---
 
@@ -765,8 +925,11 @@ An expired claim can never be redeemed and can never get a new QR, and nothing e
 app                             API
  │  POST /auth/otp/request {email}        → 200 { ok, challengeId, cooldownSeconds }
  │  (user types the 6-digit code)
- │  POST /auth/otp/verify {email, challengeId, token}
+ │  POST /auth/otp/verify {email, challengeId, token, registrationRole: "client"}
  │                                        → 200 { user, session, isNewUser }
+ │  isNewUser || registrationStatus === "profile_required"
+ │      → ask for the name → PATCH /auth/me {fullName} → 200 { registrationStatus: "completed" }
+ │  user.role !== "client"                → this email is a tendero account: dead end, say so
  │  store accessToken (900 s) + refreshToken (30 d) securely
  │  … any 401 "Invalid or expired access token." …
  │  POST /auth/refresh {refreshToken}     → 200 { session }   ← ONE call at a time
@@ -777,12 +940,17 @@ app                             API
 ### Discover
 
 ```text
- │  ask for location permission → (lat, lng)
- │  GET /clientes/coupons/feed?lat&lng    → 200 [ items ]   ← the one list screen
- │  GET /clientes/stores/nearby?lat&lng   → 200 [ stores ]  ← only for the map
+ │  ask for location permission
+ │  granted → (lat, lng)
+ │     GET /clientes/coupons/feed?lat&lng → 200 [ items ]   ← the one list screen
+ │     GET /clientes/stores/nearby?lat&lng → 200 [ stores ] ← only for the map
+ │  denied  → no coordinates at all
+ │     GET /clientes/coupons/feed          → 200 [ followed items, distance null ]
+ │     (no nearby call: a map without a position has nothing to draw)
+ │     [] → the empty state is where you ask for the permission again
 ```
 
-Both calls need coordinates. Without permission there is no feed call to make: decide the empty state (see open question 5).
+The map still needs coordinates; the feed does not (C3).
 
 ### Follow
 
@@ -815,6 +983,19 @@ The token travels only in a POST body, never in a URL — do the same in the app
 ```
 
 Offer it as explicit recovery ("Generar otro código"), never automatically, and never while the QR is on screen at the counter.
+
+### Giving a coupon back
+
+```text
+ │  wallet shows a "claimed" claim the customer no longer wants
+ │  confirm ("No podrás volver a reclamarlo")
+ │  POST /clientes/claims/:claimId/release   → 200 { data: { status: "released", qrToken: null } }
+ │  drop the stored qrToken for that claim from the secure store
+ │  the feed still reports claimed: true for that coupon — read it as "ya lo tomaste"
+ │  a re-claim answers 409 "You already released this coupon and cannot claim it again."
+```
+
+The unit is back in `remainingStock` the moment the call returns, so another customer can take it — including before this one changes their mind.
 
 ### Redemption seen from the wallet
 
@@ -851,7 +1032,7 @@ Validity, the derived `expired` status, and the stored `claimedOn`/`redeemedOn` 
 
 - Returned **only** by `POST …/claims` (201) and `POST …/claims/:id/qr` (200). Everywhere else `qrToken` is `null`.
 - The server stores only its SHA-256 hash, so it cannot be recovered — if the app loses it, the only path is a re-issue, which kills the old one.
-- 43 printable base64url characters (32 random bytes). Store it in the OS secure store; never log it, never put it in a URL, never send it to analytics, and clear it when the claim becomes `redeemed` or `expired`.
+- 43 printable base64url characters (32 random bytes). Store it in the OS secure store; never log it, never put it in a URL, never send it to analytics, and clear it when the claim becomes `redeemed`, `expired` or `released`.
 
 ### Image URLs expire — never persist them
 
@@ -897,18 +1078,24 @@ curl -s http://localhost:4300/health
 
 Set `OTP_PROVIDER=development` (the default) and, optionally, `OTP_DEV_CODE=123456` for a deterministic code. The development provider never logs the code, so a fixed `OTP_DEV_CODE` is the practical way to sign in locally. `OTP_DEV_CODE` is ignored when `NODE_ENV=production`.
 
-### Making a `client` user today
+### Making a `client` user
 
-Until registration is decided (gap 1), this is the only way — and it is exactly what the backend test suites do:
+Through the API, with the role the customer app asks for (C1):
 
 ```bash
-# sign in once through the OTP flow, then flip the role row
-docker exec -it <postgres-container> psql -U savanhi -d savanhi -c \
-  "update users set role_id = (select id from roles where name='client') \
-   where email_normalized = 'camila.cliente@example.test';"
+curl -s -X POST "$API/auth/otp/request" -H 'content-type: application/json' \
+  -d '{"email":"camila.cliente@example.test"}'
+
+curl -s -X POST "$API/auth/otp/verify" -H 'content-type: application/json' \
+  -d '{"email":"camila.cliente@example.test","challengeId":"<id>","token":"123456","registrationRole":"client"}'
+# {"user":{… "role":"client","registrationStatus":"profile_required"}, …}
+
+curl -s -X PATCH "$API/auth/me" -H "authorization: Bearer <access-token>" \
+  -H 'content-type: application/json' -d '{"fullName":"Camila Vega"}'
+# {"user":{… "registrationStatus":"completed"}}
 ```
 
-The role is read from the database on every request, so the next call with the same access token already behaves as a `client`.
+The role is read from the database on every request. Flipping `users.role_id` by hand still works and is what the older backend suites do for their fixtures, but it is no longer the only way in.
 
 ### A physical phone needs the LAN IP
 
@@ -935,6 +1122,10 @@ The role is read from the database on every request, so the next call with the s
 | Error envelope and status mapping | `packages/backend-core/src/errors.ts` |
 | Presigned image URLs | `packages/backend-core/src/storage/object-storage.ts` |
 | Product decisions and history | `odd/tasks/cuponera-mvp.md` (specs S2–S11, log L6/L7/L10/L11) |
+| Customer app decisions (C1–C5) | `odd/tasks/clientes-app.md` |
+| Registration role | `packages/api-contracts/src/auth.ts` (`REGISTRATION_ROLES`), `backend-core/src/auth/schemas.ts`, `auth/service.ts` |
+| Customer registration status | `packages/backend-core/src/database/repositories/users.repository.ts` |
+| Release and the name gate | `packages/backend-core/src/database/repositories/coupons.repository.ts`, migration `drizzle/0009_special_marvel_apes.sql` |
 
 ---
 
@@ -947,6 +1138,9 @@ The role is read from the database on every request, so the next call with the s
 - [ ] `qrToken` is written to the OS secure store, never logged, never in a URL.
 - [ ] Image URLs are used immediately and never persisted; bytes are cached by object path.
 - [ ] `claimed: true` hides the claim action; `followed: true` shows the "Siguiendo" badge.
-- [ ] A followed store with `distanceKm: null` renders without a distance.
-- [ ] `status` is re-read on focus — `expired` is derived from today, not stored.
-- [ ] Every `409` message has its own Spanish wording in the UI (there are seven distinct ones).
+- [ ] A followed store with `distanceKm: null` renders without a distance — including **every** item of a feed read without coordinates.
+- [ ] `status` is re-read on focus — `expired` and `released` are derived from stored state, not cached.
+- [ ] Every `409` message has its own Spanish wording in the UI (there are eleven distinct ones now).
+- [ ] Every verify sends `registrationRole: "client"`, and a `user.role` that is not `client` is handled as a dead end, not retried.
+- [ ] The claim action is gated on `registrationStatus === "completed"`, so the name `409` never reaches a screen.
+- [ ] Releasing asks for confirmation and clears that claim's stored `qrToken`.

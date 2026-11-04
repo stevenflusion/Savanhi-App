@@ -13,6 +13,7 @@ import {
   couponRedemptionRequestSchema,
   couponUpdateSchema,
   customerCoordinatesSchema,
+  customerFeedQuerySchema,
   imageUploadTicketRequestSchema,
   redemptionHistoryQuerySchema,
   storePhotoRegisterSchema,
@@ -961,6 +962,20 @@ export function createApiRouter({
   };
 
   /**
+   * The feed's position, which the customer may not have (C3): a denied
+   * location permission means no coordinates at all, and the decision was to
+   * answer the followed stores instead of an empty screen.
+   *
+   * `undefined` is "no position". Half a position is rejected by the schema,
+   * because the missing axis has no honest value to stand in for it.
+   */
+  const customerFeedPoint = (req: Request): GeoPoint | undefined => {
+    const { lat, lng } = customerFeedQuerySchema.parse(req.query);
+    if (lat === undefined || lng === undefined) return undefined;
+    return { latitude: lat, longitude: lng };
+  };
+
+  /**
    * Metres are the measure the database returns; a card renders kilometres.
    * Both travel, so neither client re-derives the other (S11 bans ids and
    * times in what a screen shows, not units).
@@ -1028,10 +1043,17 @@ export function createApiRouter({
       if (!coupon) throw new AppError("Unable to read the claim.", 502);
       return {
         id: record.id,
+        // Two derived statuses over one stored one. `released` comes first
+        // because it is why the claim ended (C4): a claim the customer gave
+        // back is released even once its coupon's window has passed.
         status:
-          record.status === "claimed" && record.expired
-            ? "expired"
-            : record.status,
+          record.status === "redeemed"
+            ? "redeemed"
+            : record.released
+              ? "released"
+              : record.expired
+                ? "expired"
+                : "claimed",
         qrToken,
         claimedOn: record.claimedOn,
         redeemedOn: record.redeemedOn,
@@ -1139,9 +1161,14 @@ export function createApiRouter({
     async (req, res, next) => {
       try {
         const customer = customerId(req);
-        const point = customerPoint(req);
+        const point = customerFeedPoint(req);
+        // With no position there is no "within 3 km" half to read: nothing is
+        // measurable from nowhere, so the one feed is its followed half (C3)
+        // and every item carries `distanceMeters: null`.
         const [nearby, followed] = await Promise.all([
-          stores.listNearbyActive(point, COUPON_FEED_RADIUS_METERS),
+          point === undefined
+            ? []
+            : stores.listNearbyActive(point, COUPON_FEED_RADIUS_METERS),
           stores.listFollowedByCustomer(customer, point),
         ]);
 
@@ -1224,6 +1251,38 @@ export function createApiRouter({
           customerId(req),
         );
         res.status(200).json({ data: await toCustomerClaims(records) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * Releases one of the customer's own claims (C4): the reserved unit goes
+   * back to the coupon's stock and the QR stops working.
+   *
+   * It is a POST on a sub-resource and not a `DELETE /claims/:id`, because
+   * nothing is deleted: the claim row stays as data, which is what keeps once
+   * per customer true (S6) and what the wallet renders as `released`. The
+   * answer is 200 and not 201, the same reading the redemption uses — the
+   * claim already existed and this call transitions it.
+   */
+  router.post(
+    "/api/v1/clientes/claims/:claimId/release",
+    requireRole(["client"]),
+    validateParams(claimIdParamsSchema),
+    async (req, res, next) => {
+      try {
+        const customer = customerId(req);
+        const { claimId } = await coupons.releaseClaimForCustomer(
+          String(req.params.claimId),
+          customer,
+        );
+        const records = await coupons.listClaimDetailsForCustomer(
+          customer,
+          claimId,
+        );
+        res.status(200).json({ data: await toCustomerClaim(records) });
       } catch (error) {
         next(error);
       }

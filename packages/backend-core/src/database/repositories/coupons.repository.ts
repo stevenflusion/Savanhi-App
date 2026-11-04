@@ -4,7 +4,7 @@ import type {
   CouponProductRef,
   CouponUpdateRequest,
 } from "@repo/api-contracts";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { customerDisplayName } from "../../coupons/customer-name.js";
 import { createQrToken, hashQrToken } from "../../coupons/qr-token.js";
 import { AppError } from "../../errors.js";
@@ -36,6 +36,17 @@ import {
 /** A transaction handle, so one write path can span several statements. */
 type Tx = Parameters<Parameters<DatabaseConnection["transaction"]>[0]>[0];
 type Executor = DatabaseConnection | Tx;
+
+/**
+ * The customer gave the coupon back (C4), so every path that could still USE
+ * the claim answers this: the tendero's preview, the redemption and the QR
+ * re-issue. It is a 409 and not a 404, because the claim exists and the
+ * conflict is with its stored state.
+ *
+ * It is declared here, above the constraint table below, because that table is
+ * built at module load and reads this value.
+ */
+const RELEASED_MESSAGE = "This claim was released and is no longer valid.";
 
 /**
  * The database constraints T3 installed are the real invariants; this maps the
@@ -105,6 +116,15 @@ const CONSTRAINT_FAILURES: Record<
     message: "You have already claimed this coupon.",
     statusCode: 409,
   },
+  /**
+   * A released claim can never be redeemed and a redeemed one can never be
+   * released (C4). Both paths answer before their statement runs; this is what
+   * answers if one of them ever stops checking.
+   */
+  coupon_claims_release_chk: {
+    message: RELEASED_MESSAGE,
+    statusCode: 409,
+  },
 };
 
 /**
@@ -155,6 +175,20 @@ const ALREADY_REDEEMED_MESSAGE = "This coupon has already been redeemed.";
 
 /** The validity end date is the hard limit, paused or not (S6, L6). */
 const NO_LONGER_VALID_MESSAGE = "This coupon is no longer valid.";
+
+/** The answer to the second release of one claim; never a second decrement. */
+const ALREADY_RELEASED_MESSAGE = "This claim was already released.";
+
+/**
+ * Once per customer survives the release (S6, C4): the claim row stays as
+ * data, so the customer cannot take the same coupon twice. This wording tells
+ * them WHY, which the generic "already claimed" message could not.
+ */
+const ALREADY_RELEASED_CLAIM_MESSAGE =
+  "You already released this coupon and cannot claim it again.";
+
+/** A customer with no renderable name cannot claim (C2). */
+const NAME_REQUIRED_MESSAGE = "Add your name before claiming a coupon.";
 
 /**
  * A store-authored category name is free text the tendero typed, so it has no
@@ -286,6 +320,11 @@ export function createCouponsRepository(db: DatabaseConnection) {
     }
     if (row.claim.status === "redeemed") {
       throw new AppError(ALREADY_REDEEMED_MESSAGE, 409);
+    }
+    // Before the validity check, because the release is the more specific fact
+    // about this claim: the customer handed it back, whatever the window says.
+    if (row.claim.releasedOn !== null) {
+      throw new AppError(RELEASED_MESSAGE, 409);
     }
     if (row.expired) {
       throw new AppError(NO_LONGER_VALID_MESSAGE, 409);
@@ -635,7 +674,13 @@ export function createCouponsRepository(db: DatabaseConnection) {
             type: coupons.type,
             totalStock: coupons.totalStock,
             reservedCount: coupons.claimedCount,
-            claimedCount: sql<number>`count(${couponClaims.id})::int`,
+            // A RELEASED claim is not a claim this coupon still holds (C4):
+            // the customer gave it back and the reservation went with it, so
+            // it is filtered out of the funnel instead of inflating it. It can
+            // never reach `redeemed_count` either, because
+            // `coupon_claims_release_chk` forbids a released claim from being
+            // redeemed at all.
+            claimedCount: sql<number>`count(${couponClaims.id}) filter (where ${couponClaims.releasedOn} is null)::int`,
             redeemedCount: sql<number>`count(${couponClaims.id}) filter (where ${couponClaims.status} = 'redeemed')::int`,
           })
           .from(coupons)
@@ -823,8 +868,30 @@ export function createCouponsRepository(db: DatabaseConnection) {
             throw new AppError("This coupon is not valid today.", 409);
           }
 
+          /**
+           * The customer's own precondition (C2): the tendero's counter
+           * confirms the person in front of them against `customerName`, which
+           * is derived from this column, so a claim nobody can be named for
+           * would hand the scanner an empty confirmation.
+           *
+           * Emptiness is tested the way `customerDisplayName` reads the column
+           * — no non-whitespace character — because `PATCH /auth/me` accepts a
+           * whitespace-only name and its validation belongs to the tendero's
+           * frozen auth flow.
+           */
+          const [customer] = await tx
+            .select({ fullName: users.fullName })
+            .from(users)
+            .where(eq(users.id, customerUserId));
+          if (!customerDisplayName(customer?.fullName ?? "")) {
+            throw new AppError(NAME_REQUIRED_MESSAGE, 409);
+          }
+
           const [existing] = await tx
-            .select({ id: couponClaims.id })
+            .select({
+              id: couponClaims.id,
+              releasedOn: couponClaims.releasedOn,
+            })
             .from(couponClaims)
             .where(
               and(
@@ -833,7 +900,14 @@ export function createCouponsRepository(db: DatabaseConnection) {
               ),
             );
           if (existing) {
-            throw new AppError("You have already claimed this coupon.", 409);
+            // Once per customer survives a release (C4): the row is still
+            // there, so the refusal says which of the two states it is in.
+            throw new AppError(
+              existing.releasedOn === null
+                ? "You have already claimed this coupon."
+                : ALREADY_RELEASED_CLAIM_MESSAGE,
+              409,
+            );
           }
 
           const reserved = await tx
@@ -874,6 +948,100 @@ export function createCouponsRepository(db: DatabaseConnection) {
     },
 
     /**
+     * Releases one of the customer's own claims (C4) and returns the reserved
+     * unit to stock exactly once.
+     *
+     * ONE transaction, and the claim row is locked for its whole length with
+     * `for update of coupon_claims` — only the claim, not the coupon and not
+     * the store, which other requests keep writing. That lock is what makes a
+     * release and a REDEMPTION serialise: `readRedemption` takes the same one.
+     *
+     * Exactly-once is two mechanisms deep, the same shape the redemption uses:
+     * the claim UPDATE carries `status = 'claimed' and released_on is null` in
+     * its WHERE, so a second release matches zero rows instead of marking the
+     * claim again, and the decrement only runs when that UPDATE actually
+     * changed a row. `claimed_count > 0` guards the decrement itself, so
+     * `coupons_claimed_within_stock_chk` can never be the thing that notices.
+     *
+     * The row is deliberately KEPT: `UNIQUE(coupon_id, customer_user_id)` still
+     * says this customer took this coupon once (S6), so the re-claim is a 409
+     * rather than a second claim.
+     */
+    async releaseClaimForCustomer(
+      claimId: string,
+      customerUserId: string,
+    ): Promise<{ claimId: string }> {
+      return mappingConstraints(() =>
+        db.transaction(async (tx) => {
+          const today = couponCalendarToday();
+          const [row] = await tx
+            .select({
+              claim: couponClaims,
+              couponId: coupons.id,
+              expired: sql<boolean>`${coupons.validTo} < ${today}`,
+            })
+            .from(couponClaims)
+            .innerJoin(coupons, eq(couponClaims.couponId, coupons.id))
+            .where(eq(couponClaims.id, claimId))
+            .for("update", { of: couponClaims });
+          if (!row) throw new AppError("Claim not found.", 404);
+          if (row.claim.customerUserId !== customerUserId) {
+            throw new AppError("This claim belongs to another customer.", 403);
+          }
+          if (row.claim.status === "redeemed") {
+            throw new AppError("This claim has already been redeemed.", 409);
+          }
+          if (row.claim.releasedOn !== null) {
+            throw new AppError(ALREADY_RELEASED_MESSAGE, 409);
+          }
+          // An expired claim has nothing to give back: the validity end date
+          // already took it out of circulation (S6), and the unit it reserved
+          // can no longer be claimed by anyone.
+          if (row.expired) {
+            throw new AppError(NO_LONGER_VALID_MESSAGE, 409);
+          }
+
+          const released = await tx
+            .update(couponClaims)
+            .set({ releasedOn: today })
+            .where(
+              and(
+                eq(couponClaims.id, claimId),
+                eq(couponClaims.status, "claimed"),
+                isNull(couponClaims.releasedOn),
+              ),
+            )
+            .returning({ id: couponClaims.id });
+          if (!released.length) {
+            throw new AppError(ALREADY_RELEASED_MESSAGE, 409);
+          }
+
+          const restored = await tx
+            .update(coupons)
+            .set({
+              claimedCount: sql`${coupons.claimedCount} - 1`,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(coupons.id, row.couponId),
+                sql`${coupons.claimedCount} > 0`,
+              ),
+            )
+            .returning({ id: coupons.id });
+          if (!restored.length) {
+            // Unreachable: this claim held the reservation the WHERE above
+            // just proved was still unreleased. Rolling back is the only
+            // honest answer if the counter ever disagrees.
+            throw new AppError("Unable to release the claim.", 502);
+          }
+
+          return { claimId };
+        }),
+      );
+    },
+
+    /**
      * Issues a NEW token for a claim and forgets the old one.
      *
      * Only the hash is stored, so a customer who lost the plaintext cannot be
@@ -903,23 +1071,42 @@ export function createCouponsRepository(db: DatabaseConnection) {
       if (row.claim.status === "redeemed") {
         throw new AppError("This claim has already been redeemed.", 409);
       }
+      // A released claim has no QR to re-issue: the customer gave it back (C4).
+      if (row.claim.releasedOn !== null) {
+        throw new AppError(RELEASED_MESSAGE, 409);
+      }
       if (row.expired) {
         throw new AppError(NO_LONGER_VALID_MESSAGE, 409);
       }
 
       const qrToken = createQrToken();
-      // The status is part of the WHERE, so a redemption that commits between
-      // the read above and this write loses the race instead of reviving a
-      // redeemed claim with a fresh token.
+      // The status and the release are both part of the WHERE, so a redemption
+      // or a release that commits between the read above and this write loses
+      // the race instead of reviving a dead claim with a fresh token.
       const rotated = await db
         .update(couponClaims)
         .set({ qrTokenHash: hashQrToken(qrToken) })
         .where(
-          and(eq(couponClaims.id, claimId), eq(couponClaims.status, "claimed")),
+          and(
+            eq(couponClaims.id, claimId),
+            eq(couponClaims.status, "claimed"),
+            isNull(couponClaims.releasedOn),
+          ),
         )
         .returning({ id: couponClaims.id });
       if (!rotated.length) {
-        throw new AppError("This claim has already been redeemed.", 409);
+        // Which of the two won the race decides the message, so the loser is
+        // never told the wrong story about its own claim.
+        const [latest] = await db
+          .select({ releasedOn: couponClaims.releasedOn })
+          .from(couponClaims)
+          .where(eq(couponClaims.id, claimId));
+        throw new AppError(
+          latest?.releasedOn === null || latest === undefined
+            ? "This claim has already been redeemed."
+            : RELEASED_MESSAGE,
+          409,
+        );
       }
 
       return { claimId, qrToken };
@@ -968,6 +1155,9 @@ export function createCouponsRepository(db: DatabaseConnection) {
         claimedOn: row.claim.claimedOn,
         redeemedOn: row.claim.redeemedOn,
         expired: row.expired,
+        // The date itself stays in the database: the wallet needs the FACT
+        // that the claim was released, and no screen renders a new date (S11).
+        released: row.claim.releasedOn !== null,
         coupon: mapCoupon(row.coupon),
         store: { id: row.storeId, name: row.storeName },
       }));

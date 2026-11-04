@@ -8,6 +8,7 @@ import type {
   CompleteRegistrationResponse,
   OtpRequestResponse,
   OtpVerifyResponse,
+  RegistrationRole,
 } from "@repo/api-contracts/auth";
 import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import { AppError } from "../errors.js";
@@ -372,15 +373,23 @@ export function createAuthService(
         await releaseOtpRequestLease(normalized, leaseToken);
       }
     },
+    /**
+     * `registrationRole` is the app's own indication (C1) and is read ONLY in
+     * the branch that CREATES the account below. No statement in this method
+     * ever writes `role_id` of an existing user, which is what makes the
+     * indication a registration choice and not a privilege path.
+     */
     async verifyOtp(
       {
         email,
         challengeId,
         token,
+        registrationRole,
       }: {
         email: string;
         challengeId: string;
         token: string;
+        registrationRole?: RegistrationRole;
       },
       meta: AuthRequestMeta = {},
     ): Promise<OtpVerifyResponse> {
@@ -444,15 +453,13 @@ export function createAuthService(
         const verifiedAt = new Date();
         if (!user) {
           isNewUser = true;
+          const createdRole = registrationRole ?? defaultRegistrationRole;
           const [role] = await tx
             .select({ id: roles.id })
             .from(roles)
-            .where(eq(roles.name, defaultRegistrationRole));
+            .where(eq(roles.name, createdRole));
           if (!role) {
-            throw new AppError(
-              `Role ${defaultRegistrationRole} is not configured.`,
-              500,
-            );
+            throw new AppError(`Role ${createdRole} is not configured.`, 500);
           }
           const [created] = await tx
             .insert(users)

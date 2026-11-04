@@ -68,12 +68,31 @@ export function createUsersRepository(db: DatabaseConnection) {
         mapAdminUser({ ...row.user, roleName: row.roleName }),
       );
     },
+    /**
+     * Saving a name is where onboarding advances, and the next state depends on
+     * the ROLE (C2): a `client` has no store step, so a valid name completes its
+     * registration, while a `tendero` still has to create its store through the
+     * tendero-only `registration/complete` route. Every other role keeps the
+     * tendero path, which is what it had before this rule existed.
+     *
+     * The role is read as a subquery inside the same statement rather than in a
+     * read before it, so there is no window in which the status could be
+     * decided from a role the row no longer has. A status that already moved
+     * past `profile_required` is never degraded, in either direction.
+     */
     async updateProfile(id: string, payload: { fullName: string }) {
       await db
         .update(users)
         .set({
           fullName: payload.fullName,
-          registrationStatus: sql`case when ${users.registrationStatus} = 'profile_required' then 'store_required'::registration_status else ${users.registrationStatus} end`,
+          registrationStatus: sql`case
+            when ${users.registrationStatus} <> 'profile_required'
+              then ${users.registrationStatus}
+            when (
+              select ${roles.name} from ${roles} where ${roles.id} = ${users.roleId}
+            ) = 'client' then 'completed'::registration_status
+            else 'store_required'::registration_status
+          end`,
           updatedAt: new Date(),
         })
         .where(eq(users.id, id));

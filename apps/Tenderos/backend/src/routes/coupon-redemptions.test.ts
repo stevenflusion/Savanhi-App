@@ -202,23 +202,40 @@ test("the tendero redeems a scanned QR exactly once", async (t) => {
    * read from the database on every request, so flipping the row is the whole
    * fixture — the same path the T4 and T5 suites already use.
    */
-  const signInAsCustomer = async (label: string, fullName?: string) => {
+  const signInAsCustomer = async (
+    label: string,
+    fullName = `Cliente ${label}`,
+  ) => {
     const customer = await signIn(label);
     await cleanupDb.pool.query(
       "update users set role_id = (select id from roles where name = 'client') where id = $1",
       [customer.userId],
     );
-    if (fullName !== undefined) {
-      // Through the real profile route: an OTP-registered user has no name
-      // until this step, which is exactly the absence the response has to
-      // represent.
-      const named = await call("PATCH", "/auth/me", {
-        token: customer.token,
-        body: { fullName },
-      });
-      assert.equal(named.status, 200, await named.clone().text());
-    }
+    // Through the real profile route. Every customer is named here because C2
+    // gates the claim on it; the ONE case about a customer with no name blanks
+    // the column after the claim (see `blankName`).
+    const named = await call("PATCH", "/auth/me", {
+      token: customer.token,
+      body: { fullName },
+    });
+    assert.equal(named.status, 200, await named.clone().text());
     return customer;
+  };
+
+  /**
+   * Empties a customer's name AFTER their claim exists.
+   *
+   * C2 makes a nameless claim impossible to create through the API, but the
+   * state it produces is still real: every claim made before C2 existed
+   * belongs to an OTP-registered customer whose `full_name` is `''`, and that
+   * is exactly the row the redemption response has to represent. There is no
+   * route that empties a name (`fullName` is `min(1)`), so the fixture writes
+   * the column directly.
+   */
+  const blankName = async (userId: string) => {
+    await cleanupDb.pool.query("update users set full_name = '' where id = $1", [
+      userId,
+    ]);
   };
 
   const createTendero = async (label: string) => {
@@ -723,6 +740,9 @@ test("the tendero redeems a scanned QR exactly once", async (t) => {
         { ...CURRENT, title: `Cupon sin nombre ${runId}` },
       );
       const pending = await claimed(nameless.token, coupon.id);
+      // The claim exists first, then the name goes away: the state under test
+      // is a stored claim whose customer has no name (C2).
+      await blankName(nameless.userId);
 
       const response = await redeem(owner.token, pending.qrToken);
       assert.equal(response.status, 200, await response.clone().text());
@@ -759,7 +779,10 @@ test("the tendero redeems a scanned QR exactly once", async (t) => {
         ownerProduct,
         { ...CURRENT, title: `Cupon de preservacion ${runId}` },
       );
-      const response = await claim(nameless.token, coupon.id);
+      // The named customer, because the case above left `nameless` with no
+      // name and C2 would refuse its claim for that reason instead of
+      // answering what this case is about.
+      const response = await claim(customer.token, coupon.id);
       assert.equal(response.status, 201, await response.clone().text());
       assert.equal((await storedCounters(coupon.id)).claimedCount, 1);
     },

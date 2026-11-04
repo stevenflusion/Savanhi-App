@@ -466,6 +466,28 @@ export const customerCoordinatesSchema = z.strictObject({
 export type CustomerCoordinates = z.infer<typeof customerCoordinatesSchema>;
 
 /**
+ * The feed's query string (C3). The customer may deny the location permission,
+ * and the decision was “Seguidas + pedir permiso”: with no coordinates at all
+ * the feed answers the followed half of the one feed instead of nothing.
+ *
+ * The pair is all-or-nothing. Half a position is NOT a position — a lone `lat`
+ * would otherwise have to be paired with an invented longitude — so exactly one
+ * axis is rejected. `.optional()` admits only an ABSENT parameter, so every
+ * spelling L13 banned (a blank, a space, a lone sign, hex, an exponent) is
+ * still rejected by the grammar above rather than read as the equator.
+ */
+export const customerFeedQuerySchema = z
+  .strictObject({
+    lat: coordinateSchema(90, "Latitude").optional(),
+    lng: coordinateSchema(180, "Longitude").optional(),
+  })
+  .refine(
+    (query) => (query.lat === undefined) === (query.lng === undefined),
+    "Latitude and longitude travel together.",
+  );
+export type CustomerFeedQuery = z.infer<typeof customerFeedQuerySchema>;
+
+/**
  * A store as a customer sees it (S11): no `createdAt`, so no screen can render
  * a time. This is deliberately NOT the tendero-facing `Store`, which carries
  * the owner id, the bank account fields and a creation timestamp — none of
@@ -527,11 +549,18 @@ export type CustomerCouponFeedItem = {
  * date the hard limit, so an unredeemed claim past `validTo` is expired no
  * matter what the row says. The stored status stays `claimed`, which is what
  * keeps the rule in one place instead of in a nightly job.
+ *
+ * `released` is derived the same way (C4): the customer gave the coupon back,
+ * so the row stays `claimed` and carries a `released_on` date. It is SHOWN
+ * rather than hidden — a claim that silently disappears reads as a bug to the
+ * person who released it, and the re-claim refusal would have nothing to point
+ * at. `released` wins over `expired`: the release is why the claim ended.
  */
 export const CUSTOMER_CLAIM_STATUSES = [
   "claimed",
   "redeemed",
   "expired",
+  "released",
 ] as const;
 export type CustomerClaimStatus = (typeof CUSTOMER_CLAIM_STATUSES)[number];
 

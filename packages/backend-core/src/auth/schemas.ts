@@ -1,3 +1,4 @@
+import { REGISTRATION_ROLES } from "@repo/api-contracts/auth";
 import { z } from "zod";
 
 export const refreshSchema = z.object({
@@ -12,6 +13,15 @@ export const otpVerifySchema = z.object({
   email: z.string().email(),
   challengeId: z.string().uuid(),
   token: z.string().min(1),
+  /**
+   * Which app is registering (C1). The enum is a CLOSED set of exactly the two
+   * app roles, so `admin`, `marca`, `delivery` and any unknown value are
+   * rejected here — before a statement runs, which is what makes a refused
+   * registration leave no account behind.
+   *
+   * Absent keeps today's behaviour: the process's `defaultRegistrationRole`.
+   */
+  registrationRole: z.enum(REGISTRATION_ROLES).optional(),
 });
 
 export const updateProfileSchema = z.object({
