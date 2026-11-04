@@ -4,8 +4,10 @@ import { Image, Pressable, Text, View } from "react-native";
 
 import { formatDateOnlyRange } from "@/src/lib/date-only";
 
+import { categoryColorFor } from "../../domain/category-colors";
 import { categoryIconFor } from "../../domain/category-icons";
 import {
+  couponHighlightValue,
   couponStockLabel,
   couponTypeLabel,
   couponValueLabel,
@@ -24,50 +26,72 @@ import {
 export function CouponCard({
   coupon,
   busy,
+  onOpen,
   onEdit,
   onTogglePaused,
 }: {
   coupon: Coupon;
   busy: boolean;
+  /** Tapping the card opens the coupon's own detail screen (S14). */
+  onOpen: () => void;
   onEdit: () => void;
   onTogglePaused: () => void;
 }) {
   const firstProduct = coupon.products[0];
+  const colour = categoryColorFor(firstProduct?.category);
 
   return (
     <View className="w-full max-w-xl self-center rounded-3xl bg-white p-4 shadow-sm">
-      <View className="flex-row items-center gap-3">
-        {coupon.imageUrl ? (
-          <Image
-            testID="coupon-photo"
-            source={{ uri: coupon.imageUrl }}
-            className="h-16 w-16 rounded-2xl"
-          />
-        ) : (
-          <View
-            testID="coupon-category-icon"
-            className="h-16 w-16 items-center justify-center rounded-2xl bg-orange-50"
-          >
-            <MaterialCommunityIcons
-              name={categoryIconFor(firstProduct?.category)}
-              size={28}
-              color="#1f2937"
+      {/*
+        The card BODY opens the detail; the two actions below it keep their own
+        press targets, so pausing a coupon can never navigate by accident.
+      */}
+      <Pressable
+        testID="coupon-card"
+        accessibilityRole="button"
+        accessibilityLabel={`Ver ${coupon.title}`}
+        onPress={onOpen}
+      >
+        <View className="flex-row items-center gap-3">
+          {coupon.imageUrl ? (
+            <Image
+              testID="coupon-photo"
+              source={{ uri: coupon.imageUrl }}
+              className="h-20 w-20 rounded-2xl"
             />
-          </View>
-        )}
+          ) : (
+            <View
+              testID="coupon-category-icon"
+              style={{ backgroundColor: colour.surface }}
+              className="h-20 w-20 items-center justify-center rounded-2xl"
+            >
+              <MaterialCommunityIcons
+                name={categoryIconFor(firstProduct?.category)}
+                size={34}
+                color={colour.ink}
+              />
+            </View>
+          )}
 
-        <View className="min-w-0 flex-1">
-          <Text
-            numberOfLines={1}
-            className="text-base font-semibold text-slate-900"
-          >
-            {coupon.title}
-          </Text>
-          <Text numberOfLines={2} className="mt-0.5 text-sm text-slate-500">
-            {couponValueLabel(coupon)}
-          </Text>
+          <View className="min-w-0 flex-1">
+            <Text
+              numberOfLines={1}
+              className="text-base font-semibold text-slate-900"
+            >
+              {coupon.title}
+            </Text>
+            <Text
+              numberOfLines={1}
+              className="mt-0.5 text-xl font-semibold text-slate-900"
+            >
+              {couponHighlightValue(coupon)}
+            </Text>
+            <Text numberOfLines={2} className="mt-0.5 text-sm text-slate-500">
+              {couponValueLabel(coupon)}
+            </Text>
+          </View>
         </View>
-      </View>
+      </Pressable>
 
       <View className="mt-3 flex-row flex-wrap items-center gap-2">
         <Chip label={couponTypeLabel(coupon.type)} />

@@ -1,8 +1,8 @@
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import type { Coupon } from "@repo/api-contracts";
 import * as ImagePicker from "expo-image-picker";
-import { useFocusEffect } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 
 import { EmptyState } from "@/src/components/EmptyState";
@@ -35,6 +35,17 @@ import { CouponEditor } from "../components/CouponEditor";
  * paths.
  */
 export function CouponsScreen() {
+  const router = useRouter();
+  /**
+   * Where the screen was opened FROM (S14): the Home tab's round black button
+   * sends `intent=new`, and the coupon detail's edit action sends
+   * `intent=edit` with the coupon it was showing. Anything else opens the
+   * plain list, which is what the tab itself does.
+   */
+  const { intent, couponId: intentCouponId } = useLocalSearchParams<{
+    intent?: string;
+    couponId?: string;
+  }>();
   const { requestAuthenticated } = useAuth();
   const repository = useMemo(
     () => createCouponsFetchRepository(requestAuthenticated),
@@ -54,6 +65,36 @@ export function CouponsScreen() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  /**
+   * The incoming intent is honoured ONCE. The screen reloads on every focus,
+   * and re-opening the form each time would make "Cancelar" impossible: the
+   * tendero would be thrown straight back into the editor they just left.
+   */
+  const intentApplied = useRef(false);
+  const applyIntent = useCallback(
+    (list: Coupon[]) => {
+      if (intentApplied.current) return;
+      if (intent === "new") {
+        intentApplied.current = true;
+        setEditingCouponId(null);
+        setForm(EMPTY_COUPON_FORM);
+        setFormError("");
+        return;
+      }
+      if (intent === "edit" && intentCouponId) {
+        const stored = list.find((item) => item.id === intentCouponId);
+        // A coupon that is not in this store is simply not opened: the list is
+        // the honest answer, not an editor for something that is not there.
+        if (!stored) return;
+        intentApplied.current = true;
+        setEditingCouponId(stored.id);
+        setForm(couponToFormState(stored));
+        setFormError("");
+      }
+    },
+    [intent, intentCouponId],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +124,7 @@ export function CouponsScreen() {
       setError(couponList.error);
     } else {
       setCoupons(couponList.data);
+      applyIntent(couponList.data);
     }
     if (!productOptions.success) {
       setError((current) => current || productOptions.error);
@@ -90,7 +132,7 @@ export function CouponsScreen() {
       setProducts(productOptions.data);
     }
     setLoading(false);
-  }, [repository]);
+  }, [applyIntent, repository]);
 
   useFocusEffect(
     useCallback(() => {
@@ -262,6 +304,7 @@ export function CouponsScreen() {
               key={coupon.id}
               coupon={coupon}
               busy={busy}
+              onOpen={() => router.push(`/coupon/${coupon.id}`)}
               onEdit={() => openEdit(coupon)}
               onTogglePaused={() => void togglePaused(coupon)}
             />
