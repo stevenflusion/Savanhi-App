@@ -217,6 +217,88 @@ importers:
         specifier: 5.9.2
         version: 5.9.2
 
+  apps/Clientes/mobile:
+    dependencies:
+      '@expo/metro-runtime':
+        specifier: ~6.1.2
+        version: 6.1.2(expo@54.0.35)(react-dom@19.1.0(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)
+      '@expo/vector-icons':
+        specifier: ^15.1.1
+        version: 15.1.1(expo-font@14.0.12(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)
+      expo:
+        specifier: ~54.0.35
+        version: 54.0.35(@babel/core@7.29.7)(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)(supports-color@5.5.0)(typescript@5.9.2)
+      expo-constants:
+        specifier: ~18.0.13
+        version: 18.0.13(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))
+      expo-dev-client:
+        specifier: ~6.0.21
+        version: 6.0.21(expo@54.0.35)
+      expo-font:
+        specifier: ^14.0.12
+        version: 14.0.12(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)
+      expo-linking:
+        specifier: ~8.0.12
+        version: 8.0.12(expo@54.0.35)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)
+      expo-router:
+        specifier: ~6.0.24
+        version: 6.0.24(93338e7d6c53a7ea00f52fc66f97f5f7)
+      expo-status-bar:
+        specifier: ~3.0.9
+        version: 3.0.9(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)
+      nativewind:
+        specifier: ^4.1.23
+        version: 4.2.5(react-native-reanimated@4.1.7(react-native-worklets@0.5.1(@babel/core@7.29.7)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0))(react-native-safe-area-context@5.6.2(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)(supports-color@5.5.0)(tailwindcss@3.4.19(tsx@4.22.4)(yaml@2.9.0))
+      react:
+        specifier: 19.1.0
+        version: 19.1.0
+      react-native:
+        specifier: 0.81.5
+        version: 0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0)
+      react-native-css-interop:
+        specifier: 0.2.5
+        version: 0.2.5(react-native-reanimated@4.1.7(react-native-worklets@0.5.1(@babel/core@7.29.7)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0))(react-native-safe-area-context@5.6.2(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)(tailwindcss@3.4.19(tsx@4.22.4)(yaml@2.9.0))
+      react-native-reanimated:
+        specifier: ~4.1.7
+        version: 4.1.7(react-native-worklets@0.5.1(@babel/core@7.29.7)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)
+      react-native-safe-area-context:
+        specifier: 5.6.2
+        version: 5.6.2(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)
+      react-native-screens:
+        specifier: ~4.16.0
+        version: 4.16.0(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)
+      react-native-worklets:
+        specifier: 0.5.1
+        version: 0.5.1(@babel/core@7.29.7)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)
+    devDependencies:
+      '@repo/tailwind-config':
+        specifier: workspace:*
+        version: link:../../../packages/tailwind-config
+      '@testing-library/react-native':
+        specifier: ^13.3.3
+        version: 13.3.3(jest@29.7.0(@types/node@22.19.21))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react-test-renderer@19.1.0(react@19.1.0))(react@19.1.0)
+      '@types/jest':
+        specifier: ^29.5.14
+        version: 29.5.14
+      '@types/node':
+        specifier: ^22.15.3
+        version: 22.15.3
+      '@types/react':
+        specifier: ^19.1.17
+        version: 19.2.17
+      jest:
+        specifier: ^29.7.0
+        version: 29.7.0(@types/node@22.19.21)
+      jest-expo:
+        specifier: ~54.0.16
+        version: 54.0.17(@babel/core@7.29.7)(expo@54.0.35)(jest@29.7.0(@types/node@22.19.21))(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.1.0)(supports-color@5.5.0))(react@19.1.0)(supports-color@5.5.0)
+      tailwindcss:
+        specifier: ^3.4.17
+        version: 3.4.19(tsx@4.22.4)(yaml@2.9.0)
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
   apps/Tenderos/backend:
     dependencies:
       '@repo/api-contracts':

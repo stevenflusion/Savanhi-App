@@ -29,7 +29,12 @@
         "RESEND_TIMEOUT_MS",
         "CORS_ORIGINS",
         "EXPO_PUBLIC_TENDEROS_API_URL",
-        "MAPBOX_ACCESS_TOKEN"
+        "MAPBOX_ACCESS_TOKEN",
+        "GARAGE_ENDPOINT",
+        "GARAGE_REGION",
+        "GARAGE_BUCKET",
+        "GARAGE_ACCESS_KEY_ID",
+        "GARAGE_SECRET_ACCESS_KEY"
       ],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "cache": false,
