@@ -1,7 +1,11 @@
 import type { CustomerProfileUpdateRequest } from "@repo/api-contracts";
 
 import type { StoredAuthSession } from "../domain/auth.types";
-import type { AuthRemoteRepository, AuthSessionRepository } from "./ports";
+import type {
+  AuthRemoteRepository,
+  AuthRemoteResult,
+  AuthSessionRepository,
+} from "./ports";
 
 import { SESSION_REFRESH_MARGIN_MS, toSession, toStoredAuthSession } from "./auth-session.utils";
 import { executeProtectedAuthRequest } from "./execute-protected-auth-request";
@@ -143,6 +147,23 @@ export function createAuthUseCases({
     });
   }
 
+  /**
+   * Runs any authenticated request through the same refresh, retry and
+   * generation machinery the profile calls use. Features never read or keep
+   * the access token themselves.
+   */
+  function runProtected<T>(
+    stored: StoredAuthSession,
+    request: (accessToken: string) => Promise<AuthRemoteResult<T>>,
+  ) {
+    return executeProtectedAuthRequest({
+      stored,
+      remoteRepository,
+      sessionRepository,
+      request,
+    });
+  }
+
   /** Local sign-out never depends on the network. */
   async function logoutAuth(stored: StoredAuthSession | null) {
     if (!stored) return;
@@ -162,6 +183,7 @@ export function createAuthUseCases({
     discardSession,
     loadProfile,
     saveProfile,
+    runProtected,
     logoutAuth,
   };
 }

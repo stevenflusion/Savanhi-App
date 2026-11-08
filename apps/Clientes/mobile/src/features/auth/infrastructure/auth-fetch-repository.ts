@@ -47,7 +47,7 @@ function pruneRefreshRequests(now: number) {
 
 let cachedBaseUrl: string | undefined;
 
-function defaultBaseUrl() {
+export function defaultBaseUrl() {
   cachedBaseUrl ??= resolveClientesApiBaseUrl({
     override: process.env.EXPO_PUBLIC_CLIENTES_API_URL,
     expoHostUri: Constants.expoConfig?.hostUri,

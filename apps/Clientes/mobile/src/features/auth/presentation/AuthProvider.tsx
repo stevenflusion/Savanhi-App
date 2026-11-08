@@ -10,6 +10,7 @@ import {
 import type { AuthUser } from "@repo/api-contracts";
 
 import { getOtpFailureMessage } from "../application/otp-flow";
+import type { AuthRemoteResult } from "../application/ports";
 import { createAuthUseCases } from "../application/use-cases";
 import type { StoredAuthSession } from "../domain/auth.types";
 import {
@@ -37,6 +38,19 @@ export type SaveProfileResult =
   | { success: true }
   | { success: false; reason: "underage" | "failed" | "stale" };
 
+/**
+ * What a feature learns from an authenticated request. `ignored` covers every
+ * case where the answer must not be used: no open gate, a logout or newer
+ * login while it ran, a lost session, or a 403 that sent the customer back
+ * through the profile gate.
+ */
+export type ProtectedOutcome<T> =
+  | { status: "ok"; data: T }
+  | { status: "failed"; httpStatus?: number }
+  | { status: "ignored" };
+
+const IGNORED = { status: "ignored" } as const;
+
 type AuthContextType = {
   isReady: boolean;
   gate: GateState;
@@ -51,6 +65,9 @@ type AuthContextType = {
   ) => ReturnType<typeof authUseCases.verifyAuthOtp>;
   saveProfile: (input: SaveProfileInput) => Promise<SaveProfileResult>;
   retryProfile: () => Promise<void>;
+  runProtected: <T>(
+    request: (accessToken: string) => Promise<AuthRemoteResult<T>>,
+  ) => Promise<ProtectedOutcome<T>>;
   logout: () => Promise<void>;
 };
 
@@ -95,7 +112,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (outcome.user.id === sent.user.id) setStored(outcome);
   };
 
-  const loadProfile = async (session: StoredAuthSession, epoch: number) => {
+  /**
+   * `afterForbidden` is set only when a feature request was refused with 403
+   * and the server is being asked again. If it then calls the profile
+   * eligible, the two answers contradict each other: reopening the tabs would
+   * repeat the same refused request forever, so the customer lands on the
+   * recoverable profile error and only an explicit retry opens the gate again.
+   */
+  const loadProfile = async (
+    session: StoredAuthSession,
+    epoch: number,
+    afterForbidden = false,
+  ) => {
     if (session.user.role !== "client") {
       setProfile({ status: "idle" });
       return;
@@ -110,7 +138,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { result } = outcome;
     if (result.success) {
-      setProfile({ status: "loaded", profile: result.data });
+      const contradicts =
+        afterForbidden &&
+        result.data.eligibility === "eligible" &&
+        hasName(result.data.fullName);
+      setProfile(
+        contradicts
+          ? { status: "error" }
+          : { status: "loaded", profile: result.data },
+      );
     } else if (result.status === 403 && !result.eligibility) {
       setProfile({ status: "forbidden" });
     } else {
@@ -216,6 +252,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await loadProfile(session, epochRef.current);
     };
 
+    const runProtected: AuthContextType["runProtected"] = async (request) => {
+      const session = storedRef.current;
+      if (!session || session.user.role !== "client") return IGNORED;
+      const gateNow = deriveGate({
+        isReady: true,
+        user: session.user,
+        profileState: profileRef.current,
+      });
+      if (gateNow.status !== "ready") return IGNORED;
+      const epoch = epochRef.current;
+
+      const outcome = await authUseCases.runProtected(session, request);
+      if (epoch !== epochRef.current) return IGNORED;
+
+      applyOutcomeSession(session, outcome.stored);
+      if (outcome.stored?.user.id !== session.user.id) return IGNORED;
+
+      const { result } = outcome;
+      if (result.success) return { status: "ok", data: result.data };
+      if (result.status === 403 && result.eligibility !== "eligible") {
+        // The server no longer agrees with the profile the gate opened on:
+        // hold the tabs and ask the server again, never guess a profile.
+        await loadProfile(outcome.stored, epoch, true);
+        return IGNORED;
+      }
+      return { status: "failed", httpStatus: result.status };
+    };
+
     const logout = async () => {
       const session = storedRef.current;
       epochRef.current += 1;
@@ -236,6 +300,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       verifyOTP,
       saveProfile,
       retryProfile,
+      runProtected,
       logout,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
