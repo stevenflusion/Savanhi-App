@@ -208,8 +208,10 @@ test("the tendero reads the metrics of a store they own", async (t) => {
     fullName = `Cliente ${label}`,
   ) => {
     const customer = await signIn(label);
+    // C9: a customer needs an adult birth date to use the customer API, so the
+    // fixture seeds one with the role.
     await cleanupDb.pool.query(
-      "update users set role_id = (select id from roles where name = 'client') where id = $1",
+      "update users set role_id = (select id from roles where name = 'client'), birth_date = '1990-01-01' where id = $1",
       [customer.userId],
     );
     // Every customer is named here because C2 gates the claim on it; the one

@@ -325,8 +325,10 @@ test("tendero coupon routes are owner scoped and type safe", async (t) => {
   const customer = await signIn("customer");
   // The role is read from the database on every request, so flipping the row
   // is enough to get a `client` caller without a second app instance.
+  // C9: a customer needs an adult birth date to use the customer API, so the
+  // fixture seeds one with the role.
   await cleanupDb.pool.query(
-    "update users set role_id = (select id from roles where name = 'client') where id = $1",
+    "update users set role_id = (select id from roles where name = 'client'), birth_date = '1990-01-01' where id = $1",
     [customer.userId],
   );
 

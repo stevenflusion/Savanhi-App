@@ -43,6 +43,9 @@ export const users = pgTable("users", {
   emailNormalized: text("email_normalized").notNull().unique(),
   passwordHash: text("password_hash"),
   fullName: text("full_name").notNull(),
+  // Date-only (S11) and nullable: only a customer fills it (C8), and every
+  // user created before it existed simply has none — it is never backfilled.
+  birthDate: date("birth_date", { mode: "string" }),
   active: boolean("active").default(true).notNull(),
   emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   registrationStatus: registrationStatusEnum("registration_status")

@@ -215,8 +215,10 @@ test("customer coupon routes discover, follow and claim", async (t) => {
    */
   const signInAsCustomer = async (label: string) => {
     const customer = await signIn(label);
+    // C9: a customer needs an adult birth date to use the customer API, so the
+    // fixture seeds one with the role.
     await cleanupDb.pool.query(
-      "update users set role_id = (select id from roles where name = 'client') where id = $1",
+      "update users set role_id = (select id from roles where name = 'client'), birth_date = '1990-01-01' where id = $1",
       [customer.userId],
     );
     // C2 gates the claim route on the customer having a name, so the fixture

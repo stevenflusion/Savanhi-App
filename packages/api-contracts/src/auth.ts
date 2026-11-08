@@ -113,6 +113,44 @@ export type UpdateProfileRequest = {
   fullName: string;
 };
 
+/**
+ * The customer app is for adults (C9): a customer must be at least this old,
+ * counted in completed years on the `America/Bogota` calendar day, so the 18th
+ * birthday itself already qualifies.
+ */
+export const CUSTOMER_MINIMUM_AGE = 18;
+
+/**
+ * Whether a customer may use the customer API. Decided from the stored birth
+ * date alone, so it is the same fact for a new account and for one that
+ * existed before the rule (C9, no grandfathering). `registrationStatus` is
+ * deliberately not part of it: the status says how far onboarding went, not
+ * how old the person is.
+ */
+export const CUSTOMER_ELIGIBILITIES = [
+  "eligible",
+  "birth_date_required",
+  "underage",
+] as const;
+
+export type CustomerEligibility = (typeof CUSTOMER_ELIGIBILITIES)[number];
+
+/**
+ * The customer's own profile. It is a separate resource from `AuthUser` on
+ * purpose: the tendero's auth responses must not grow a key, so the birth date
+ * is only ever read here. `birthDate` is a date-only `YYYY-MM-DD` string (S11).
+ */
+export type CustomerProfile = {
+  fullName: string;
+  birthDate: string | null;
+  eligibility: CustomerEligibility;
+};
+
+export type CustomerProfileUpdateRequest = {
+  fullName: string;
+  birthDate: string;
+};
+
 export type CompleteRegistrationRequest = {
   fullName: string;
   store: {

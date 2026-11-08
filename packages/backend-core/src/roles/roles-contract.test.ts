@@ -17,6 +17,7 @@ function userRow(roleName: string): UserRow {
     emailNormalized: "stored-role@example.test",
     passwordHash: null,
     fullName: "Stored Role",
+    birthDate: null,
     active: true,
     emailVerifiedAt: now,
     registrationStatus: "completed",

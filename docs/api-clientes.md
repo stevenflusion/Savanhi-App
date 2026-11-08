@@ -6,7 +6,7 @@ Every response body and every error message below was captured from a real run o
 
 The customer capability lives inside the Tenderos backend (`apps/Tenderos/backend`) under its own namespace, `/api/v1/clientes`. There is no separate customer service, and there is no customer UI in this repository yet (S2).
 
-- **9 customer routes**, all `requireRole(["client"])`.
+- **9 customer routes**, all behind `requireRole(["client"])` **and the eligibility gate** (a stored birth date making the customer at least 18, C9), plus **2 profile routes** (`GET`/`PUT /api/v1/clientes/profile`) that are `client`-only and deliberately NOT behind the gate.
 - **6 auth routes** the app needs, all unauthenticated or any-role.
 - **One response envelope**: `{ "data": … }` for customer routes, `{ "user" }` / `{ "session" }` / `{ "ok" }` for auth.
 
@@ -18,7 +18,7 @@ Four gaps this document used to list are **closed** — a customer can register 
 
 | Gap | What it means for the app | Evidence |
 | --- | --- | --- |
-| `POST /auth/registration/complete` is `requireAuth(["tendero"])` and creates a **store**. | There is no customer-side "complete your profile" endpoint, and a customer does not need one: `PATCH /auth/me` with `fullName` is the whole customer profile step and it reaches `completed` (C2). | `packages/backend-core/src/auth/router.ts:137` |
+| `POST /auth/registration/complete` is `requireAuth(["tendero"])` and creates a **store**. | The customer's profile step is `PUT /api/v1/clientes/profile` (name **and** birth date, C8) — see "Customer eligibility" below. `PATCH /auth/me` with `fullName` still works and still completes a client's `registrationStatus` (C2), but it does **not** make the customer eligible. | `packages/backend-core/src/auth/router.ts:137` |
 | **One email is one account and one role.** An address that already registered through the tendero app stays a `tendero` for ever; the customer app's indication cannot change it (C1). | Signing in with such an address succeeds and then answers `403` on every customer route. Word that dead end — "este correo ya tiene una cuenta de tienda" — instead of retrying the sign-in. | C1 below |
 | No pagination on the feed or the wallet. | `GET /coupons/feed` and `GET /claims` return **everything**, always. No `limit`, no `offset`, no cursor. Plan for client-side windowing and for the payload growing. | `routes/index.ts`, the two customer read routes |
 | No single-coupon read for a customer, and **no deep links in the MVP** (C5). | There is no `GET /api/v1/clientes/coupons/:id`. A coupon is only ever reachable embedded in a feed item or in a claim. Sharing a coupon by link was decided OUT of the MVP, so nothing has to open one. | route inventory below |
@@ -75,10 +75,10 @@ TOKEN=<access-token>
 ```
 
 ```bash
-# 2b. first run only: a new account is `profile_required` and cannot claim yet
-curl -s -X PATCH "$API/auth/me" -H "authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' -d '{"fullName":"Camila Vega"}'
-# {"user":{… ,"role":"client","registrationStatus":"completed"}}
+# 2b. first run only: a customer must save name AND birth date (18+) before any customer route answers
+curl -s -X PUT "$API/api/v1/clientes/profile" -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"fullName":"Camila Vega","birthDate":"2002-11-04"}'
+# {"data":{"fullName":"Camila Vega","birthDate":"2002-11-04","eligibility":"eligible"}}
 ```
 
 ```bash
@@ -126,9 +126,10 @@ Every call after step 2 sends `Authorization: Bearer <accessToken>`. The access 
 | `201` | A claim was created. |
 | `400` | The request is malformed on its own terms: a bad path parameter, a bad query string, a bad body. Always `{"error":"Invalid request payload.", "details": …}` when Zod rejected it. |
 | `401` | No access token, or an expired/revoked/garbage one. Also a wrong or expired OTP code, and an invalid refresh token. |
-| `403` | Authenticated but not allowed: wrong role, a disabled account on OTP request, or someone else's claim. |
+| `403` | Authenticated but not allowed: wrong role, a disabled account on OTP request, someone else's claim, or a customer who is not yet eligible (no birth date, or under 18). |
 | `404` | The thing does not exist (store, coupon, claim), or the route does not exist. |
 | `409` | The request is well formed and conflicts with **stored state**: already claimed, out of stock, paused, store deactivated, outside validity, already redeemed, no longer valid, no name on the account, already released. |
+| `422` | `PUT /api/v1/clientes/profile` with a well-formed birth date that makes the customer younger than 18. Nothing is stored. |
 | `413` | An image upload ticket asked for more than 5 MiB (tendero-only path). |
 | `429` | Rate limited. `Retry-After` header + `details.retryAfterSeconds`. |
 | `500` | Unexpected failure. `502` appears for impossible-state assertions (e.g. a row that should exist). |
@@ -319,7 +320,7 @@ curl -s "$API/auth/me" -H "authorization: Bearer $TOKEN"
 
 ### `PATCH /auth/me`
 
-The only profile write a customer has, and the step that **completes a customer's registration** (C2). **Any role**, bearer required.
+The shared name write, and the step that **completes a customer's `registrationStatus`** (C2). **Any role**, bearer required. A customer's birth date is **not** written here: this route is the tendero's too, its body and responses are frozen, and an unknown key such as `birthDate` is ignored. Use `PUT /api/v1/clientes/profile` (below) for the birth date and for eligibility.
 
 | Field | Type | Rules |
 | --- | --- | --- |
@@ -341,7 +342,9 @@ curl -s -X PATCH "$API/auth/me" -H "authorization: Bearer $TOKEN" \
 | `400` | `{"error":"Invalid request payload.","details":{"formErrors":[],"fieldErrors":{"fullName":["Too small: expected string to have >=1 characters"]}}}` |
 | `401` | as `GET /auth/me` |
 
-> **`registrationStatus` now has a customer end state (C2).** For a `client`, this route advances `profile_required` → `completed` in one step: a customer has no store to create, so there is nothing between its name and a finished registration. A second write never degrades it. For every other role the old path is untouched — a `tendero` still goes `profile_required` → `store_required` here and reaches `completed` only through the tendero-only `registration/complete` route. The customer app can therefore trust `registrationStatus`: `profile_required` means "ask for the name", `completed` means "done".
+> **`registrationStatus` is not eligibility (C9).** A customer who saved only a name through this route is `completed` and still gets `403` on every customer route until the birth date is stored. Read eligibility from `GET /api/v1/clientes/profile`.
+>
+> **`registrationStatus` now has a customer end state (C2).** For a `client`, this route advances `profile_required` → `completed` in one step: a customer has no store to create, so there is nothing between its name and a finished registration. A second write never degrades it. For every other role the old path is untouched — a `tendero` still goes `profile_required` → `store_required` here and reaches `completed` only through the tendero-only `registration/complete` route. `profile_required` therefore means "no name saved yet" and `completed` means "a name was saved" — not that the customer may use the API.
 >
 > The **claim** route is where the name is enforced, not this one. `fullName` only has to be one character here, and a whitespace-only name would leave the tendero's scanner with no name to read, so the claim route tests for a renderable name instead (see route 6). The validation of this route is shared with the tendero's own auth flow and is deliberately left alone.
 
@@ -394,9 +397,66 @@ Afterwards the access token is `401 Invalid or expired access token.` and its re
 
 ---
 
+## Customer eligibility and profile (C8, C9)
+
+A customer may call the nine customer routes below only with a **stored birth date that makes them at least 18** on the `America/Bogota` calendar day (the 18th birthday itself qualifies). This applies to new accounts **and to accounts that existed before the rule** — nobody is grandfathered, and no birthday was invented for them: their `birthDate` is `null` until they save one. `registrationStatus` plays no part in it. Tendero accounts are not affected in any way: they are never asked for a birth date, their auth responses carry no new key, and their routes are not gated.
+
+Two routes sit **outside** the gate, because the way out of it cannot be behind it. Both need `Authorization: Bearer <accessToken>` with role `client` (`401` without a token, `403 {"error":"You do not have access to this resource."}` for another role). Sign-out is the existing `POST /auth/logout`, also outside the gate. Responses below were captured from a real run on 2026-11-08 against a throwaway PostgreSQL database; ids, tokens and timestamps are replaced.
+
+### `GET /api/v1/clientes/profile`
+
+```json
+{"data":{"fullName":"","birthDate":null,"eligibility":"birth_date_required"}}
+```
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `fullName` | string | The stored name, `""` when none. |
+| `birthDate` | `YYYY-MM-DD` string or `null` | Date-only (S11): never a time, never shifted by a timezone. |
+| `eligibility` | `"eligible"` \| `"birth_date_required"` \| `"underage"` | `underage` can only be seen for a date stored outside this API; this API refuses to store one. |
+
+### `PUT /api/v1/clientes/profile`
+
+Saves the name and the birth date **together or not at all**, and answers with the same shape as the `GET`. It also advances a client's `registrationStatus` from `profile_required` to `completed`, exactly as `PATCH /auth/me` does. It can never change the stored role; unknown keys such as `role` are ignored. Sending it again overwrites both values; that is how a mistyped date is corrected, and it does not imply an edit-profile screen.
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `fullName` | string | Trimmed, then at least 1 character. The trimmed value is stored. |
+| `birthDate` | string | Exactly `YYYY-MM-DD`, a real calendar date (no `2002-02-30`, no `2023-02-29`), written with a four-digit positive year. No earliest year is enforced. |
+
+```bash
+curl -s -X PUT "$API/api/v1/clientes/profile" -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"fullName":"Camila Vega","birthDate":"2002-11-04"}'
+```
+
+**200** — `{"data":{"fullName":"Camila Vega","birthDate":"2002-11-04","eligibility":"eligible"}}`
+
+| Status | Body | When |
+| --- | --- | --- |
+| `422` | `{"error":"You must be at least 18 years old to use Savanhi.","details":{"eligibility":"underage","minimumAge":18}}` | a real date younger than 18 (including a future date). Nothing is stored. |
+| `400` | `{"error":"Invalid request payload.","details":{"formErrors":[],"fieldErrors":{"birthDate":["Birth date must be a real date written YYYY-MM-DD."]}}}` | a missing, mistyped or impossible date. Nothing is stored. |
+| `400` | `{"error":"Invalid request payload.","details":{"formErrors":[],"fieldErrors":{"fullName":["Too small: expected string to have >=1 characters"]}}}` | an empty or whitespace-only name. Nothing is stored. |
+
+Age is counted in completed years on the Bogota calendar day. A 29 February birthday is reached on 1 March in a common year, so a customer born on 29 February 2008 is still under 18 on 28 February 2026 and eligible on 1 March 2026.
+
+The Spanish sentence the app shows for the `422` and for `underage` is the app's, not the API's: the messages above are English log text; key on `details.eligibility`.
+
+### The gate on every other customer route
+
+An ineligible customer gets, on all nine routes, before any validation of the request:
+
+| Status | Body | When |
+| --- | --- | --- |
+| `403` | `{"error":"Complete your profile to use Savanhi.","details":{"eligibility":"birth_date_required","minimumAge":18}}` | no stored birth date |
+| `403` | `{"error":"You must be at least 18 years old to use Savanhi.","details":{"eligibility":"underage","minimumAge":18}}` | a stored date younger than 18 |
+
+The check reads the database on every request, so saving a valid profile unlocks the very next call. A nameless but adult customer passes the gate and is still refused at the claim with the name `409` (C2).
+
+---
+
 ## Customer endpoints
 
-All nine require `Authorization: Bearer <accessToken>` with role `client`.
+All nine require `Authorization: Bearer <accessToken>` with role `client` **and an eligible profile** (see the section above).
 
 Shared failures, identical on every one of them:
 
@@ -405,6 +465,7 @@ Shared failures, identical on every one of them:
 | `401` | `{"error":"Missing access token."}` | no bearer header |
 | `401` | `{"error":"Invalid or expired access token."}` | bad/expired/revoked token |
 | `403` | `{"error":"You do not have access to this resource."}` | a valid token whose role is not `client` |
+| `403` | `{"error":"Complete your profile to use Savanhi.","details":{"eligibility":"birth_date_required","minimumAge":18}}` or the under-18 message | an ineligible customer (C9) |
 | `400` | `{"error":"Invalid request payload.","details":{"formErrors":[],"fieldErrors":{"storeId":["Invalid UUID"]}}}` | a path parameter that is not a UUID (field name is `storeId`, `couponId` or `claimId`) |
 | `429` | `{"error":"Too many requests. Try again later.","details":{"retryAfterSeconds":N}}` | the 120/minute API limiter |
 

@@ -1,6 +1,11 @@
 export { createBackendApp } from "./app.js";
 export { createAuthRouter, createRequireAuth, createRequireRole } from "./auth/router.js";
 export { createAuthService } from "./auth/service.js";
+export { customerProfileUpdateSchema } from "./auth/schemas.js";
+export {
+  createCustomerProfileService,
+  evaluateCustomerEligibility,
+} from "./auth/customer-profile.js";
 export type { AuthService } from "./auth/service.js";
 export { createBackendContext } from "./context/backend-context.js";
 export type { BackendContext, BackendRepositories } from "./context/backend-context.js";

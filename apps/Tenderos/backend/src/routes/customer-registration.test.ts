@@ -458,6 +458,12 @@ test("customer registration carries the app role and requires a name", async (t)
         registrationRole: "client",
       });
       const customerToken = customer.session.accessToken;
+      // C9: an adult birth date is what lets the customer reach the claim at
+      // all; the name stays absent, which is the case under test.
+      await cleanupDb.pool.query(
+        "update users set birth_date = '1990-01-01' where id = $1",
+        [customer.user.id],
+      );
 
       const stored = async () => {
         const { rows } = await cleanupDb.pool.query<{

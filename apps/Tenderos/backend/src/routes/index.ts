@@ -33,6 +33,8 @@ import {
 } from "@repo/api-contracts";
 import {
   AppError,
+  createCustomerProfileService,
+  customerProfileUpdateSchema,
   isImageKeyOwnedBy,
   type BackendContext,
   type CouponMetricsRecord,
@@ -949,6 +951,65 @@ export function createApiRouter({
     req.auth?.user.id ?? "";
 
   /**
+   * Eligibility (C9). A customer may use the customer API only with a stored
+   * birth date that makes them at least 18 — for a new account and for one that
+   * existed before the rule alike. The guard sits AFTER `requireRole`, so an
+   * anonymous caller is still a 401 and a tendero still a 403 of the role
+   * kind; it reads the birth date from the database on every request, because
+   * `registrationStatus` says how far onboarding went and not how old the
+   * person is.
+   *
+   * Every customer route below uses it EXCEPT the profile routes: the way out
+   * of the gate cannot be behind the gate, and logout is `/auth/logout`.
+   */
+  const customerProfile = createCustomerProfileService(
+    context.repositories.users,
+  );
+  const requireClient = requireRole(["client"]);
+  const requireEligibleClient: RequestHandler = (req, res, next) => {
+    requireClient(req, res, (error?: unknown) => {
+      if (error) {
+        next(error);
+        return;
+      }
+      customerProfile.requireEligible(customerId(req)).then(() => next(), next);
+    });
+  };
+
+  router.get(
+    "/api/v1/clientes/profile",
+    requireRole(["client"]),
+    async (req, res, next) => {
+      try {
+        res.status(200).json({ data: await customerProfile.get(customerId(req)) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * The customer's registration data in one write (C8): name and birth date, a
+   * PUT because both are always sent. It is additive on purpose — the shared
+   * `PATCH /auth/me` is the tendero's route too and is not touched. An
+   * underage date answers 422 and changes nothing.
+   */
+  router.put(
+    "/api/v1/clientes/profile",
+    requireRole(["client"]),
+    validateBody(customerProfileUpdateSchema),
+    async (req, res, next) => {
+      try {
+        res
+          .status(200)
+          .json({ data: await customerProfile.update(customerId(req), req.body) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
    * The customer's position, validated out of the query string.
    *
    * Parsed here rather than through `validateQuery`, which assigns
@@ -1074,7 +1135,7 @@ export function createApiRouter({
 
   router.get(
     "/api/v1/clientes/stores/nearby",
-    requireRole(["client"]),
+    requireEligibleClient,
     async (req, res, next) => {
       try {
         const records = await stores.listNearbyActive(
@@ -1090,7 +1151,7 @@ export function createApiRouter({
 
   router.get(
     "/api/v1/clientes/stores/followed",
-    requireRole(["client"]),
+    requireEligibleClient,
     async (req, res, next) => {
       try {
         const records = await stores.listFollowedByCustomer(customerId(req));
@@ -1108,7 +1169,7 @@ export function createApiRouter({
    */
   router.put(
     "/api/v1/clientes/stores/:storeId/follow",
-    requireRole(["client"]),
+    requireEligibleClient,
     validateParams(storeIdParamsSchema),
     async (req, res, next) => {
       try {
@@ -1125,7 +1186,7 @@ export function createApiRouter({
 
   router.delete(
     "/api/v1/clientes/stores/:storeId/follow",
-    requireRole(["client"]),
+    requireEligibleClient,
     validateParams(storeIdParamsSchema),
     async (req, res, next) => {
       try {
@@ -1157,7 +1218,7 @@ export function createApiRouter({
    */
   router.get(
     "/api/v1/clientes/coupons/feed",
-    requireRole(["client"]),
+    requireEligibleClient,
     async (req, res, next) => {
       try {
         const customer = customerId(req);
@@ -1220,7 +1281,7 @@ export function createApiRouter({
    */
   router.post(
     "/api/v1/clientes/coupons/:couponId/claims",
-    requireRole(["client"]),
+    requireEligibleClient,
     validateParams(couponIdParamsSchema),
     async (req, res, next) => {
       try {
@@ -1244,7 +1305,7 @@ export function createApiRouter({
 
   router.get(
     "/api/v1/clientes/claims",
-    requireRole(["client"]),
+    requireEligibleClient,
     async (req, res, next) => {
       try {
         const records = await coupons.listClaimDetailsForCustomer(
@@ -1269,7 +1330,7 @@ export function createApiRouter({
    */
   router.post(
     "/api/v1/clientes/claims/:claimId/release",
-    requireRole(["client"]),
+    requireEligibleClient,
     validateParams(claimIdParamsSchema),
     async (req, res, next) => {
       try {
@@ -1296,7 +1357,7 @@ export function createApiRouter({
    */
   router.post(
     "/api/v1/clientes/claims/:claimId/qr",
-    requireRole(["client"]),
+    requireEligibleClient,
     validateParams(claimIdParamsSchema),
     async (req, res, next) => {
       try {

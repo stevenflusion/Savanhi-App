@@ -1,5 +1,6 @@
 import { REGISTRATION_ROLES } from "@repo/api-contracts/auth";
 import { z } from "zod";
+import { parseBirthDate } from "./customer-profile.js";
 
 export const refreshSchema = z.object({
   refreshToken: z.string().min(1),
@@ -26,6 +27,23 @@ export const otpVerifySchema = z.object({
 
 export const updateProfileSchema = z.object({
   fullName: z.string().min(1),
+});
+
+/**
+ * The customer's own profile write (C8). It is a separate schema, on a separate
+ * route, from `updateProfileSchema` above: that one belongs to the tendero too,
+ * so tightening it would change the tendero. Unknown keys are stripped, which
+ * is what keeps `role` or `registrationStatus` in a payload from reaching a
+ * statement.
+ *
+ * Whether the date is old enough is not decided here — it needs the
+ * `America/Bogota` day, which only the database knows.
+ */
+export const customerProfileUpdateSchema = z.object({
+  fullName: z.string().trim().min(1),
+  birthDate: z.string().refine((value) => parseBirthDate(value) !== null, {
+    message: "Birth date must be a real date written YYYY-MM-DD.",
+  }),
 });
 
 export const completeRegistrationSchema = z.object({
