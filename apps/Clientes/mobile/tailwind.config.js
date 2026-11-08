@@ -5,6 +5,11 @@ module.exports = {
   presets: [sharedNativePreset],
   content: ["./app/**/*.{js,jsx,ts,tsx}", "./src/**/*.{js,jsx,ts,tsx}"],
   theme: {
-    extend: {},
+    extend: {
+      fontFamily: {
+        poppins: ["Poppins"],
+        sans: ["Poppins"],
+      },
+    },
   },
 };

@@ -11,9 +11,16 @@ module.exports = {
     // Required by Expo Router. It is NOT a coupon link: deep links are out of
     // the MVP (C5), so no intent filter is declared.
     scheme: "savanhiclientes",
-    // The shell requests no runtime permission. Location, camera and any other
+    // No runtime permission is requested. Location, camera and any other
     // permission arrive with the feature that needs them (C10).
-    plugins: ["expo-router"],
+    // `expo-secure-store` holds the session. Its plugin keeps those entries out
+    // of Android Auto Backup (a restored backup cannot decrypt them); the
+    // Face ID text it can set applies to iOS only and no biometric option is
+    // used, so nothing is added to the Android manifest permissions.
+    plugins: [
+      "expo-router",
+      ["expo-secure-store", { configureAndroidBackup: true }],
+    ],
     updates: {
       enabled: false,
       checkAutomatically: "ON_ERROR_RECOVERY",

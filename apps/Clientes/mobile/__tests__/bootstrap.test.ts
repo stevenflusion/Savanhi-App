@@ -47,7 +47,9 @@ describe("Savanhi Clientes bootstrap", () => {
       );
 
       expect(config.android.permissions ?? []).toEqual([]);
-      expect(pluginNames).toEqual(["expo-router"]);
+      // `expo-secure-store` stores the session; it declares no permission on
+      // Android and no camera, location or notification plugin exists.
+      expect(pluginNames).toEqual(["expo-router", "expo-secure-store"]);
     });
 
     it("declares no deep link or universal link for coupons (C5)", () => {
@@ -129,6 +131,7 @@ describe("Savanhi Clientes bootstrap", () => {
           "GARAGE_ACCESS_KEY_ID",
           "GARAGE_SECRET_ACCESS_KEY",
           "EXPO_PUBLIC_TENDEROS_API_URL",
+          "EXPO_PUBLIC_CLIENTES_API_URL",
         ]),
       );
     });
