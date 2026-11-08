@@ -1,7 +1,7 @@
 # Customer app (clientes)
 
 Objective: Build the customer app for the Savanhi cuponera MVP.
-Branch: `feat/clientes-app`; delivery strategy `ask-on-risk`; reviewable work units of ~400 authored changed lines (advisory).
+Branch: `feat/clientes-app`; delivery strategy `feature-branch-chain` (approved, L4) on top of the `ask-on-risk` risk policy; reviewable work units of ~400 authored changed lines (advisory). Local only: the parent makes a Conventional Commit for every completed, verified unit; nothing is pushed, no PR is opened and nothing is merged without later explicit user authorization.
 Runner (as found): contracts build `pnpm --filter @repo/api-contracts build`, backend-core build `pnpm --filter @repo/backend-core build`, migrations `pnpm --filter @repo/backend-core db:migrate`, backend-core suites `pnpm --filter @repo/backend-core test` (`tsx --test`, one level deep per `src/**/*.test.ts`), app backend suites `pnpm --filter tenderos-backend test`, mobile `pnpm --filter tenderos-mobile test` (Jest, `jest-expo`), types `pnpm check-types` (turbo).
 
 This feature continues `odd/tasks/cuponera-mvp.md`, which built the customer BACKEND (S2, S6–S9) and left registration, the customer's name, discovery without location and claim cancellation as open product questions (L10/L11, L15). `docs/api-clientes.md` is the reference of what the API does today and is updated by the same work units.
@@ -50,7 +50,7 @@ HARD CONSTRAINT carried from S14 of the cuponera feature and restated by the use
 - A PAUSED coupon and a DEACTIVATED store are deliberately not checked, the same way the redemption does not check them (S6, L6, L11): both block NEW claims only, and refusing a release would trap the customer in a coupon they cannot use and cannot give back. The unit returns to a counter nobody can claim from until the coupon is active again, which is the correct state.
 - A release racing a redemption: exactly one wins. Both paths take the same row lock (`for update of coupon_claims`) and both carry their precondition in the WHERE of their own UPDATE, so the loser is rejected rather than overwriting the winner.
 - `UNIQUE(coupon_id, customer_user_id)` STAYS, so the claim row survives as data and a re-claim of the same coupon is `409 {"error":"You already released this coupon and cannot claim it again."}`.
-- ASSUMPTION the user may still correct: a customer who released a coupon CANNOT claim it again. S6 of the cuponera feature says “Una vez por cliente”, and the release does not undo the fact that this customer took it once. If the user wants a release to restore the right to claim, the unique index has to go and the answer becomes a second claim rather than a 409.
+- CONFIRMED (L3; it was an ASSUMPTION when T1 was built): a customer who released a coupon CANNOT claim it again. S6 of the cuponera feature says “Una vez por cliente”, and the release does not undo the fact that this customer took it once. The user answered “Si” when asked whether release means the same customer cannot claim that coupon again. The backend behaviour above is therefore final and unchanged; had the user wanted a release to restore the right to claim, the unique index would have had to go and the answer would have become a second claim rather than a 409.
 - Schema, additive only: `coupon_claims.released_on` is a NULLABLE `date` column plus the new CHECK `coupon_claims_release_chk` (`released_on is null or status <> 'redeemed'`). The generated migration issues zero `DROP` and no `ALTER` that removes anything; `coupon_claims_status_chk` keeps its two stored values (`claimed`, `redeemed`) and `coupons_claimed_within_stock_chk` keeps holding, because the decrement is guarded by `claimed_count > 0`.
 - `released` is therefore DERIVED in the response and not a stored status, exactly as `expired` is: the row stays `claimed` and carries a `released_on` date. The wallet SHOWS it (`CustomerClaimStatus` gains `"released"`) rather than hiding the claim, because a disappearing coupon reads as a bug to the person who released it; hiding it would also make the re-claim 409 unexplainable.
 - Tendero metrics stay correct: a released claim does NOT count in `claimedCount`, never appears in `redeemedCount` or in the redemption history, and `remainingStock` — derived from the `claimed_count` reservation counter — goes back up by one. The funnel keeps `redeemedCount <= claimedCount` by construction.
@@ -62,6 +62,60 @@ HARD CONSTRAINT carried from S14 of the cuponera feature and restated by the use
 - User wording (L2): “No en el MVP (Recomendado)”
 - No shared-coupon link, no universal/app link, no single-coupon customer endpoint is added by this feature. A coupon stays reachable only through the feed or the wallet, which is what `docs/api-clientes.md` already records as a gap.
 - Acceptance: no route, scheme, contract or configuration for a link-shared coupon exists after this feature; the gap stays listed as an open item instead of being silently closed.
+
+### C6 — The customer app: platform, name, location and navigation
+
+- User wording (L3): “android”; “Si apps del monorepo”; “Correcto” (React Native + Expo like Tenderos); “¿La llamamos Savanhi Clientes y la ubicamos en apps/Clientes/mobile?” → “Si”; “Con que corra al hacer pnpm dev junto a tenderos”; navigation proposal “una barra flotante con Inicio (feed único), Mapa (tiendas cercanas), Billetera (cupones reclamados y QR) y Perfil” → “Si”.
+- The app is named `Savanhi Clientes`, lives in `apps/Clientes/mobile` inside this monorepo beside `apps/Tenderos`, and is React Native + Expo like Tenderos. The first version targets ANDROID only.
+- `pnpm dev` at the repository root must run it together with the tendero stack. Today `package.json` starts only `tenderos-backend` (`turbo run dev --filter=tenderos-backend`); the future root dev command must include the backend and BOTH mobile packages, with Expo ports that do not collide. `pnpm-workspace.yaml` already matches `apps/*/*`, so the new package is discovered without a workspace change.
+- Navigation is a floating bar with exactly four destinations: Inicio (the ONE feed, S7 — followed and nearby coupons together, NOT a separate followed-coupon tab), Mapa (nearby stores), Billetera (claimed coupons and their QR) and Perfil.
+- Acceptance: the package exists at `apps/Clientes/mobile` under the name `Savanhi Clientes`, builds for Android, and starts from the root `pnpm dev` alongside Tenderos with distinct Expo ports; the bar shows those four destinations and no fifth; no followed-only tab or screen exists; no iOS target is claimed or tested.
+- Technical decisions left to implementation (not product questions): the package identifier, the noncolliding Expo ports and the syntax of the root `dev` script. The one open item that may need the user or the environment is the Android distribution and testing mode (see Open questions).
+
+### C7 — Login and register share the Tenderos logic and design, without touching Tenderos
+
+- User wording (L3): “El login y register comparten la misma logica que la app tenderos”; asked “¿Reutilizamos también el diseño del login y registro de Tenderos, sin modificar los archivos de esa app?” → “Si”.
+- The customer app reuses BOTH the design and the logic of the Tenderos login and registration (OTP request and verify, token storage, refresh), and it sends `registrationRole: "client"` on verify (C1).
+- HARD CONSTRAINT, restated: no file under `apps/Tenderos/mobile/**` changes — in particular `app/auth/**`, `src/components/auth/**`, `src/features/auth/presentation/**` and any shared asset, token or stylesheet those screens render (S14). Reuse therefore flows ONE way, from Tenderos into the new app; the new package never forces an edit on the old one.
+- Acceptance: a diff of the customer work touches no path under `apps/Tenderos/mobile/**`; the customer login and register screens look and behave like the tendero's for the shared steps; the tendero app's tests (`pnpm --filter tenderos-mobile test`) keep their baseline result.
+- Reuse mechanism: the design and logic are brought in as NEW files copied and adapted inside the customer app. Importing from Tenderos paths or extracting a shared package is NOT an option, because either would edit or couple to `apps/Tenderos/mobile/**`, which the approval forbids.
+
+### C8 — Registration data: name, surname, email and a mandatory segmented birth date
+
+- User wording (L3): “Si, datos: Nombre, fecha nacimiento y 2 mas importantes que creas tu”; “Ubicacion no, si la fecha de nacimiento es importante en esra app, quiero que sea input navgeblaes ejemplo: 04 / 11 / 2002”; asked “¿Con «navegables» querés tres campos: día, mes y año, con avance automático al completar cada parte y posibilidad de volver a editar cualquiera?” → “Si”; asked “¿La fecha de nacimiento será obligatoria para completar el registro?” → “Sip”.
+- ORCHESTRATOR-SELECTION under the user's delegation (“2 mas importantes que creas tu”; these two are NOT user quotations): the two extra data are surname and email. The four registration data are therefore name, surname, email and birth date. There is NO phone.
+- Location is NOT a registration datum (“Ubicacion no”). This does not remove the map and discovery capability (C6, C10).
+- The birth date is entered in three navigable fields — day, month, year — shown like `04 / 11 / 2002`; each part advances automatically to the next when completed, and any part can be edited again. It is MANDATORY to complete registration.
+- Birth date is a date-only value (S11): no time of day, no device-timezone shift; the reference "today" for any age computation is the `America/Bogota` calendar date.
+- Today birth date is not a contract, schema or profile field; the backend stores only `fullName`. Surname persistence is NOT settled and this spec does not mandate separate columns (see Open questions).
+- Acceptance: the registration form collects name, surname, email and the three-part birth date and no phone and no location; completing a part moves focus to the next; any part is editable after completion; registration cannot be completed with the birth date empty or incomplete; a date that is not a real calendar date (for example 31/02/2002) is not accepted; the stored value round-trips as a date-only string with no timezone shift.
+- Not decided here: the exact Spanish labels, placeholders and validation messages of the form (only the example `04 / 11 / 2002` and the sentence in C9 are fixed).
+
+### C9 — Minimum age 18 for every customer, with no grandfathering
+
+- User wording (L3): minimum age → “18”; asked “¿Los clientes ya registrados también deberán completar su fecha de nacimiento y cumplir los 18 años antes de usar la app?” → “sipi”; asked “Para menores de 18 propongo bloquear la finalización y mostrar «Debes tener al menos 18 años para usar Savanhi», permitiendo corregir la fecha o cerrar sesión. ¿Aprobás ese comportamiento y texto?” → “si”.
+- The minimum age is 18, meaning age >= 18: a customer is eligible from their 18th birthday on (the `America/Bogota` calendar date). A customer under 18 cannot COMPLETE registration; the app shows exactly «Debes tener al menos 18 años para usar Savanhi» (verbatim Spanish UI copy) and lets the person correct the birth date or sign out.
+- NO grandfathering: customers who already exist also have to provide a birth date and be at least 18 before using the app. Until they do, they are held at the same profile gate as a new customer.
+- The tendero's behaviour is unchanged: the birth-date and 18+ rules apply to the `client` role only. The tendero's registration states and responses stay byte-identical (C1, C2, hard constraint).
+- The requirement is settled: eligibility is needed BEFORE USING THE APP, so a gate that only stops claiming is NOT an acceptable weaker alternative. Where and how the backend enforces it is a TECHNICAL decision, not a product question: it has to deliver that requirement without changing any tendero behavior — how `registrationStatus`, `PATCH /auth/me` and the `/api/v1/clientes/*` routes express "profile incomplete or underage" for a `client`, and how the birth date is stored and validated. That API design is still to be mapped; no such API exists today and none is asserted by this document.
+- Acceptance: a new customer with an age under 18 cannot finish registration, sees the exact sentence above, and can either correct the date or sign out; an existing customer without a birth date is stopped at the same gate before reaching Inicio, Mapa, Billetera or Perfil; a customer of 18 or more completes normally; a `tendero` is never asked for a birth date, never blocked by age, and every Tenderos auth response is identical to today's (differential check against the base, as T1 did).
+- Not decided here: the backend's rejection wording for an underage submission (the in-app sentence above is fixed).
+- Acceptance (boundary): a customer whose 18th birthday is today is eligible; one whose 18th birthday is tomorrow is not.
+
+### C10 — Location is requested when the map or a location-needing action needs it
+
+- User wording (L3): the orchestrator proposed asking on the first Inicio; the user corrected: “exactooo, pero no en INicio sino cuando abra el mapa o cuando requiera permisos para la ubicaciin la app”.
+- The app does NOT ask for location on the first Inicio. It asks when the customer opens Mapa or performs an action that requires location.
+- With no coordinates, Inicio uses the existing no-location feed of C3 (followed stores only, `distanceMeters: null`); `stores/nearby` keeps requiring both coordinates.
+- Acceptance: opening Inicio for the first time shows no location prompt; while no coordinates have been previously authorized, the feed call carries neither `lat` nor `lng`; opening Mapa, or an action that needs a position, triggers the permission request; no other location prompt exists. Once location has been authorized (for example through Mapa), Inicio may send the pair and show the single nearby-plus-followed feed of S7 — Inicio is not required to stay location-free.
+- Not decided and not invented: the permission rationale text, the denial or rejection copy, and what Mapa shows when permission is denied.
+
+### C11 — Visual direction: useful ideas from seven references, nothing copied
+
+- User wording (L3): “Las imagenes escoge lo que te sirve no busco elementos concretos”.
+- The orchestrator may choose and combine whatever style is useful from the seven reference images the user attached. The references give SHAPE AND STYLE only, as in S14: no reference is committed to the repository, no name, brand or copy is reproduced, and no feature is inferred from them.
+- The references were not available to this documentation phase; their local paths are unknown and no image has been inspected for this document.
+- Acceptance: the repository contains no copy of a reference image; every screen traces its data to a real endpoint (S14, S11); no feature appears in the app only because a reference showed it.
 
 ## Tasks
 
@@ -87,7 +141,53 @@ HARD CONSTRAINT carried from S14 of the cuponera feature and restated by the use
   - Authored ~2,423 lines (707 tracked insertions plus 1,716 in the three new test files; the generated migration SQL, the drizzle snapshot and this document excluded), ~1,790 of them tests and 245 documentation, against ~381 of implementation. Flagged to the parent for slicing or a `size:exception`.
   - NOT done and not claimed: no mobile code was touched at all, so nothing here is exercised by a UI. The four new English messages have no Spanish wording anywhere — the tendero's scanner falls back to a generic sentence for a message it does not know, which is safe but vague, and `apps/Tenderos/mobile` is closed to this task.
 
-- T2 — customer mobile app — PENDING, details to be specified later with the user. Nothing is assumed about its framework, navigation or screens here; S2 of the cuponera feature only says the customer gets its own app, and L2 of this feature decided the four backend rules it needs. The app's own specs are written when that work starts.
+- T2 — customer mobile app — C4, C6–C11 — PENDING umbrella. Its original text said that framework, name, structure, visual design and navigation were undecided and would be specified with the user; L3 now settles them as C6–C11 (history preserved: L1, L2 and T1 are unchanged). The sub-units below are a PLAN, not completed work and not authorization for features nobody asked for (notifications, profile editing, link sharing, anything the specs do not name).
+
+  Planning rules for every sub-unit:
+  - Each sub-unit is independent work that will run in its OWN isolated worktree; two writers are never active in this checkout. The parent owns all git actions (commits, branches, merges); no PR is authorized and no delivery plan is published.
+  - Behaviour, tests and documentation of a sub-unit are planned and committed together, never as separate code and test writers. The ~400 authored-lines figure stays ADVISORY: tests are never dropped, code never minified, a unit never split artificially to fit.
+  - Forecasts are rough, authored lines (implementation / tests / docs), to be corrected when the unit is built. Total is far above 400, so the user approved the `feature-branch-chain` delivery (L4): chained units on `feat/clientes-app`, kept local, one parent-made Conventional Commit per completed verified unit, and no push, PR or merge without later explicit user authorization. The `ask-on-risk` policy still applies to risky decisions.
+  - Future implementation needs an observed RED → GREEN → REFACTOR for every runnable deterministic behaviour, preservation tests for each touched shared auth command, and a differential check against the base commit in a `mktemp -d` copy outside the repository.
+  - Baseline: `pnpm check-types` fails ONLY on the 9 `tenderos-mobile` errors in `__tests__/auth-logic.test.ts`; any other failure counts.
+
+  - T2a — C8, C9 (+ C1, C2 preserved) — backend: customer birth date and 18+ eligibility — delegated; reason: independent backend eligibility unit that runs in parallel with T2b in an ISOLATED worktree with a disjoint edit surface (parent owns git). The current documentation work is T2a preparation, not a separate docs-writer behavior unit — PENDING — commit `-`
+    - Scope: birth date as a stored date-only value for `client`, the 18+ rule (age >= 18) evaluated on the `America/Bogota` date, the eligibility gate for new AND existing customers before using the app, contract changes (type-only for the mobile), migration (additive), and `docs/api-clientes.md` updated by the same unit — the doc changes when the behaviour exists, not before. Tendero behaviour untouched.
+    - Risk (planned Task Size Risk items): item 1 — persisted user birth-date format and its migration; item 2 — the customer eligibility guard. Shared-consumer impact (the Tenderos app and tendero backend share the auth path: `PATCH /auth/me`, `registrationStatus`, OTP verify) is evaluated over the ACTUAL diff, not assumed. Own commit so native review can take it alone. An independent verifier runs only if a named high-risk item is actually hit, after the unit's own tests; the native RDD assessment is separate. Neither has run.
+    - Forecast: ~250 implementation / ~700 tests / ~80 docs. Contract builds first.
+    - Verification (planned): `pnpm --filter @repo/api-contracts build && pnpm --filter @repo/backend-core build`; `pnpm --filter @repo/backend-core test`; `pnpm --filter tenderos-backend test`; `pnpm --filter tenderos-mobile test`; `pnpm check-types`; differential check of the Tenderos auth responses against the base, expected byte-identical.
+
+  - T2b — C6, C7 (bootstrap only) — Android Expo bootstrap and root `pnpm dev` wiring — independent of T2a (needs no birth-date API) — delegated; reason: independent Android bootstrap unit that runs in parallel with T2a in an ISOLATED worktree with a disjoint edit surface (parent owns git) — PENDING — commit `-`
+    - Scope: `apps/Clientes/mobile` package `Savanhi Clientes`, Android target, the four-destination floating bar shell, a root dev command that starts backend and both mobile packages on distinct Expo ports, and its test setup. No Tenderos file is edited.
+    - Risk (planned Task Size Risk items): item 5 — dependencies, tooling and the root dev environment; possibly item 3 — shared command behavior, if the root `dev` script change alters what the existing command does for developers. Decided over the actual diff. No auth behaviour yet.
+    - Forecast: ~250 implementation / ~150 tests / ~40 docs.
+    - Verification (planned): the new package's focused and full Jest commands once its name and scripts exist; `pnpm --filter tenderos-mobile test`; `pnpm check-types`; observing `pnpm dev` starts both Expo apps without a port collision.
+
+  - T2c — C7, C8, C9 — customer authentication and profile gate, with the segmented birth date — depends on T2a and T2b — planned; route re-evaluated before launch — PENDING — commit `-`
+    - Scope: login and register reusing the Tenderos design and logic (C7), `registrationRole: "client"`, the name/surname/email/birth-date form with the three navigable fields and the exact «Debes tener al menos 18 años para usar Savanhi» block (C9), and the gate for existing customers.
+    - Risk (planned Task Size Risk items): item 2 — credentials and the age guard; item 4 — refresh serialization (a refresh replay revokes the whole session family). Own commit. An independent verifier only for a named high-risk item actually hit, after self-tests; native RDD assessment is separate.
+    - Forecast: ~450 implementation / ~600 tests / ~40 docs.
+    - Verification (planned): the new package's focused and full Jest commands; `pnpm --filter tenderos-mobile test` unchanged; `pnpm check-types`.
+
+  - T2d — C3, C6, C10, C11 — discovery: Inicio feed, Mapa, follow and unfollow — depends on T2c — planned; route re-evaluated before launch — PENDING — commit `-`
+    - Scope: the single Inicio feed (followed plus nearby, with the “Siguiendo” badge of S7), Mapa over `stores/nearby`, follow and unfollow, and the location request only when Mapa opens or an action needs it (C10). Visual direction per C11.
+    - Risk: no named Task Size Risk item is assumed in advance; the tier is assessed over the ACTUAL changes when implemented, not fixed here. Constraints to respect meanwhile: presigned image URLs are never persisted.
+    - Forecast: ~550 implementation / ~450 tests / ~40 docs.
+    - Verification (planned): the new package's focused and full Jest commands, including a test that the first Inicio shows no location prompt and, with no previously authorized coordinates, sends neither `lat` nor `lng`; `pnpm check-types`.
+
+  - T2e — C4, C6 — wallet, QR, claim and release — depends on T2c — planned; route re-evaluated before launch — PENDING — commit `-`
+    - Scope: Billetera (claimed coupons, the derived `released` state, the card reading the feed's `claimed` flag as “already taken by me”), claiming, the QR display and re-issue, and release. Profile (Perfil) contents beyond sign-out are NOT specified and not part of this unit until the user decides.
+    - Risk (planned Task Size Risk item): item 2 — the QR secret: it must be held in secure storage and never rendered as selectable text, logged, or put in a URL. An independent verifier only if that item is actually hit, after self-tests; native RDD assessment is separate.
+    - Forecast: ~500 implementation / ~450 tests / ~40 docs.
+    - Verification (planned): the new package's focused and full Jest commands, including that the QR value reaches no log or URL; `pnpm check-types`.
+
+  - Forecast total: ~2,000 implementation / ~2,350 tests / ~240 docs, roughly 4,590 authored lines — well above ~400, delivered as the approved `feature-branch-chain` (L4); T2a and T2b can proceed in parallel in separate worktrees, the rest are sequential.
+
+  Open questions (genuinely undecided; none is chosen here):
+  - How is the surname stored: composed into the existing `fullName`, or separate columns? The existing claim gate and the tendero scanner both read `users.full_name`.
+  - API design uncertainty (technical, for T2a): the requirement is already settled — eligibility BEFORE using the app, for new and existing customers, with tendero behavior unchanged; a claim-only gate is not a permissible weaker option. What is still to be mapped is HOW the API expresses and enforces it (through `registrationStatus`, a guard on the `/api/v1/clientes/*` routes, or both) and what an underage or incomplete customer receives, plus the backend rejection wording for an underage birth date.
+  - Android distribution and testing mode (Expo Go, dev client or build) for `Savanhi Clientes`, if the environment or the user needs to choose; no hardware is needed at the documentation stage.
+  - What Perfil shows and whether it allows editing (nothing is specified), plus the Spanish labels, validation messages and the permission and denial copy of C10.
+  - Where the seven reference images are available to the orchestrator when the visual unit starts.
 
 ## Log
 
@@ -99,3 +199,16 @@ HARD CONSTRAINT carried from S14 of the cuponera feature and restated by the use
   - Liberar un reclamo → “Sí, puede liberarlo (Recomendado)”
   - Compartir con enlace → “No en el MVP (Recomendado)”
   - Applied as C1, C2, C3, C4 and C5. The one thing the answers do NOT settle is whether a released coupon may be claimed again; C4 records the reading as an ASSUMPTION the user may correct, because S6 of the cuponera feature says “Una vez por cliente” and the release does not erase that the customer took it once.
+- L3 — 2026-11-08 Customer app (T2) decisions, confirmed with the user. Original T2 outcome: “Pendiente: T2, la app móvil del cliente.” Answers are verbatim; the questions are the orchestrator's wording:
+  - Shared login and register → “El login y register comparten la misma logica que la app tenderos”; reuse the design too, without modifying the Tenderos files → “Si” (C7)
+  - Dev wiring → “Con que corra al hacer pnpm dev junto a tenderos” (C6)
+  - References → “Las imagenes escoge lo que te sirve no busco elementos concretos” (C11)
+  - `/app` meant `apps/` of the monorepo → “Si apps del monorepo”; React Native + Expo like Tenderos → “Correcto”; name and place `Savanhi Clientes` in `apps/Clientes/mobile` → “Si”; first-version platform → “android” (C6)
+  - Floating bar with Inicio (single feed), Mapa, Billetera and Perfil → “Si” (C6)
+  - Registration data → “Si, datos: Nombre, fecha nacimiento y 2 mas importantes que creas tu”. The orchestrator chose surname and email under that delegation (ORCHESTRATOR-SELECTION, not a user quotation); no phone (C8)
+  - Birth date → “Ubicacion no, si la fecha de nacimiento es importante en esra app, quiero que sea input navgeblaes ejemplo: 04 / 11 / 2002”; three fields with auto-advance and re-editing → “Si”; mandatory → “Sip” (C8)
+  - Minimum age → “18”; existing customers also need birth date and 18+ → “sipi”; block under 18 with «Debes tener al menos 18 años para usar Savanhi», correct the date or sign out → “si” (C9)
+  - Released coupon cannot be claimed again by the same customer → “Si” (C4 assumption now CONFIRMED)
+  - Location prompt → “exactooo, pero no en INicio sino cuando abra el mapa o cuando requiera permisos para la ubicaciin la app” (C10)
+  - Applied as C4 (confirmed) and C6–C11, with sub-units T2a–T2e planned under T2. Not settled and recorded as open questions under T2: surname persistence, the API design that enforces the 18+ gate, the Android distribution mode, Perfil contents and the remaining Spanish copy.
+- L4 — 2026-11-08 Delivery decision. Asked “El alcance estimado supera las 400 líneas: ¿lo organizamos en entregas encadenadas sobre feat/clientes-app, manteniendo todo local, sin push ni PR?” the user answered: “si, y siempre con commits”. Applied as delivery strategy `feature-branch-chain`: chained units on `feat/clientes-app`, the parent makes a Conventional Commit for every completed verified unit, everything stays local, and nothing is pushed, opened as a PR or merged without later explicit user authorization. The other open questions under T2 are unchanged.
