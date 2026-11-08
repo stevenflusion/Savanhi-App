@@ -3,6 +3,7 @@ import type {
   CustomerCouponFeedItem,
   CustomerEligibility,
   CustomerStore,
+  NearbyStore,
 } from "@repo/api-contracts";
 
 import type { AuthRemoteResult } from "@/src/features/auth";
@@ -12,6 +13,7 @@ import type {
   DiscoveryRemoteRepository,
   FollowState,
 } from "../application/ports";
+import { coordinatesQuery, isCoordinates } from "../domain/location";
 
 const OFFLINE_MESSAGE =
   "No pudimos conectarnos con el servidor. Revisa tu conexión e intenta de nuevo.";
@@ -65,6 +67,20 @@ function isStore(value: unknown): value is CustomerStore {
   );
 }
 
+const isFiniteIn = (value: unknown, limit: number) =>
+  typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= limit;
+
+/** A nearby store always has coordinates and both distances (the API's promise). */
+function isNearbyStore(value: unknown): value is NearbyStore {
+  return (
+    isStore(value) &&
+    isFiniteIn(value.latitude, 90) &&
+    isFiniteIn(value.longitude, 180) &&
+    typeof (value as NearbyStore).distanceMeters === "number" &&
+    typeof (value as NearbyStore).distanceKm === "number"
+  );
+}
+
 async function readJson(response: Response): Promise<unknown> {
   return response.json().catch(() => ({}));
 }
@@ -93,6 +109,12 @@ const networkFailure: Failure = {
   error: OFFLINE_MESSAGE,
   unauthorized: false,
 };
+/** A position the API could not accept is never sent; nothing leaves the device. */
+const invalidPosition: Failure = {
+  success: false,
+  error: REQUEST_MESSAGE,
+  unauthorized: false,
+};
 const malformed = (response: Response): Failure => ({
   success: false,
   error: REQUEST_MESSAGE,
@@ -119,16 +141,41 @@ export function createDiscoveryFetchRepository({
     });
 
   return {
-    async getFeed(accessToken) {
+    async getFeed(accessToken, coordinates) {
+      // With no position the request is the bare feed, byte for byte.
+      if (coordinates !== undefined && !isCoordinates(coordinates)) {
+        return invalidPosition;
+      }
       try {
         const response = await authorizedFetch(
           accessToken,
-          "/api/v1/clientes/coupons/feed",
+          `/api/v1/clientes/coupons/feed${
+            coordinates ? coordinatesQuery(coordinates) : ""
+          }`,
         );
         if (!response.ok) return await failure(response);
         const body = await readJson(response);
         const data = isRecord(body) ? body.data : undefined;
         if (!Array.isArray(data) || !data.every(isFeedItem)) {
+          return malformed(response);
+        }
+        return { success: true, data };
+      } catch {
+        return networkFailure;
+      }
+    },
+
+    async getNearbyStores(accessToken, coordinates) {
+      if (!isCoordinates(coordinates)) return invalidPosition;
+      try {
+        const response = await authorizedFetch(
+          accessToken,
+          `/api/v1/clientes/stores/nearby${coordinatesQuery(coordinates)}`,
+        );
+        if (!response.ok) return await failure(response);
+        const body = await readJson(response);
+        const data = isRecord(body) ? body.data : undefined;
+        if (!Array.isArray(data) || !data.every(isNearbyStore)) {
           return malformed(response);
         }
         return { success: true, data };

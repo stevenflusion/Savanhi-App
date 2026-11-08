@@ -2,7 +2,7 @@
 
 The customer app of the Savanhi cuponera. React Native + Expo (same SDK family as `apps/Tenderos/mobile`), Android only.
 
-Today it is a **navigation shell behind a customer login and profile gate**, with a working **Inicio**: a floating bar with Inicio, Mapa, Billetera and Perfil, email-code sign-in, and an Inicio that shows the customer's real coupons and lets them follow and unfollow stores. Mapa, Billetera and Perfil are still titled placeholders, and there is no map, QR, claim or permission request yet; those arrive with later units of `odd/tasks/clientes-app.md`.
+Today it is a **navigation shell behind a customer login and profile gate**, with a working **Inicio** and a native **Mapa**: a floating bar with Inicio, Mapa, Billetera and Perfil, email-code sign-in, an Inicio that shows the customer's real coupons, and a Mapa of the nearby stores. Both let the customer follow and unfollow stores. Billetera and Perfil are still titled placeholders, and there is no QR or claim yet; those arrive with later units of `odd/tasks/clientes-app.md`.
 
 ## Quick path
 
@@ -18,7 +18,7 @@ Today it is a **navigation shell behind a customer login and profile gate**, wit
 | Metro port     | `8083` (Tenderos uses `8082`)                                        |
 | Mode           | Expo dev client (`expo start --dev-client --lan`), like Tenderos     |
 | Android id     | `com.savanhi.clientes`                                               |
-| Permissions    | none requested (Inicio never asks for location)                      |
+| Permissions    | foreground location only (`ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION`), asked only when Mapa opens |
 | Sign-in        | email code (OTP) only; verification always sends `registrationRole: "client"` |
 | Profile gate   | no tab opens until the server reports the customer `eligible` (18+) AND a name exists |
 | Session        | `expo-secure-store` under the key `savanhi-clientes-session` (never the Tenderos key) |
@@ -42,7 +42,7 @@ The customer's name and optional surname are sent as one `fullName` (there is no
 
 ## Inicio: the feed and following
 
-Inicio reads `GET /api/v1/clientes/coupons/feed` with **no query at all**: this version never asks for the phone's location and sends neither `lat` nor `lng`, so the server answers with the coupons of the stores the customer follows (`distanceMeters` is `null`). Nearby coupons join the same single feed once Mapa can supply a position (a later unit); there is no second feed, tab or filter.
+Inicio reads `GET /api/v1/clientes/coupons/feed`. **Until Mapa has produced a position it sends no query at all** and never asks for the phone's location: neither `lat` nor `lng` is sent, so the server answers with the coupons of the stores the customer follows (`distanceMeters` is `null`). Once Mapa holds a position, Inicio sends exactly the `lat`/`lng` pair and the same single feed also carries the nearby coupons with their distance; there is no second feed, tab or filter. If the position is lost, Inicio drops the nearby items at once and reads the followed-only feed again.
 
 | Case                                        | What the customer sees                                                                       |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -66,6 +66,26 @@ The followed-stores list (`GET /stores/followed`) is read **only when the feed i
 
 **Session behavior.** Every request goes through the same protected-request path as the profile calls (`runProtected` in the auth layer), so refresh, single-flight and the generation checks are unchanged. A `401` refreshes once and retries; a terminal `401` clears the session. A `403` re-reads the server profile at once and the gate decides (under 18, birth date missing, or not a customer), so the tabs close instead of showing a feed error. If that re-read calls the customer eligible and named after all (for example a proxy that refuses only the feed), the app does not reopen the tabs on its own, because that would repeat the refused request forever: it stops on the profile error («No pudimos cargar tu perfil. Intenta de nuevo») and only «Reintentar» tries again, one bounded cycle per tap. An answer that arrives after logout or under a newer login is dropped. No request is made unless the profile gate is open.
 
+## Mapa: nearby stores and location
+
+Mapa shows a native map (`@rnmapbox/maps`) fixed on the customer's position with one marker per store of `GET /api/v1/clientes/stores/nearby?lat&lng` (the API's 3 km radius), and a card per store with its name, address, distance and the same follow control as Inicio. A store's following state comes from `GET /stores/followed` plus the server-confirmed changes, because the nearby answer carries no such flag.
+
+| Case                                        | What the customer sees                                                                                          |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| First Inicio                                | Nothing location-related: no prompt, no permission, status or position call                                      |
+| Mapa opens, permission undetermined         | The system's own foreground prompt, once                                                                        |
+| Locating, or reading the stores             | «Buscando tiendas cercanas…»; the map exists only once a real position does                                     |
+| Stores found                                | The map with markers and the store cards; none: «No hay tiendas cercanas»                                       |
+| Permission denied                           | Only «La ubicación es necesaria para mostrarte tiendas cercanas. Puedes activarla más adelante desde los ajustes de Savanhi en tu teléfono» |
+| Position or stores cannot be read           | «No pudimos cargar las tiendas. Intenta de nuevo» with «Reintentar»                                             |
+| Build without a Mapbox token                | The same error without a map or retry (a build prerequisite, see below); the store cards still list               |
+
+**Location rules.** The OS is asked only while the permission is still undetermined and only when Mapa gains focus. A denial, including one the OS would let the app repeat, is never followed by a second request, and there is no «Abrir ajustes» button, retry button or pre-permission screen: the customer changes the permission in the phone's settings for Savanhi, outside the app, and the other three tabs keep working. When the app returns to the foreground after Mapa was opened, the permission is read straight away (never requested), even while a position reading is still pending: a later grant loads the position, and a revocation clears the position and the nearby stores at once, cancels any reading in flight (its late answer is dropped) and Inicio asks for the followed-only feed again. A Mapa pass that overlaps the permission dialog joins it, so there is one prompt and one reading. An approximate grant is used as the OS returns it; precision is never requested. The position is a single reading (`getCurrentPositionAsync`, without the system settings dialog, so turned-off location services are an error state and not a second prompt). There is no watch, no `UserLocation`, no background location or foreground service, and the position is held in memory only: never stored, logged or sent anywhere but as the `lat`/`lng` query to the signed-in customer's API.
+
+**Shared state.** Inicio and Mapa stay mounted once opened, so a `DiscoveryProvider` inside the protected tabs holds the position, the confirmed follow results and a revision that grows once per confirmed follow. The provider is unmounted whenever the profile gate closes (logout, a refused profile) and is keyed by customer, so a late position or answer is dropped and a new login never inherits the old position. Reads are tagged by the position and by order, so an older answer cannot overwrite a newer one.
+
+**Mapbox token and native build.** The map needs the PUBLIC token (`pk.…`), never a secret one, and no Mapbox downloads token (the plugin states it is no longer required). Put `MAPBOX_ACCESS_TOKEN` in this package's own `.env` (Expo CLI loads it before reading `app.config.js`) or export it in the shell (the name is already allowed by `turbo.json`); the repository root `.env` is NOT read by the Expo apps. The two new native modules mean **Expo Go cannot run Savanhi Clientes and a new Android development-client build is required** (`expo-dev-client` is already installed). The Android permissions declared in `app.config.js` are the two foreground location ones; `expo-location` needs no config plugin.
+
 ## API address
 
 | Build       | Address                                                                                                                                  |
@@ -81,19 +101,18 @@ The root command runs Turbo in its default **strict** env mode. Where the backen
 
 | Source                                    | Behavior                                                                                                                                                                                                                                                                       |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Root `.env` file (copy of `.env.example`) | Works as is. The backend reads `.env` files itself, after Turbo starts it.                                                                                                                                                                                                     |
+| Root `.env` file (copy of `.env.example`) | Works as is for the backend, which reads `.env` files itself, after Turbo starts it. The Expo apps read their own package `.env`, not this file.                                                                                                                                                                                                     |
 | Variables exported in the shell or CI     | Only names listed in `turbo.json` (`tasks.dev.env`) reach the tasks. That list holds `DATABASE_URL`, `AUTH_JWT_SECRET` and the five required `GARAGE_*` names. Optional backend variables (for example `GARAGE_PUBLIC_BASE_URL` or `RATE_LIMIT_*`) must go in the `.env` file. |
 
-The backend refuses to boot without `DATABASE_URL`, `AUTH_JWT_SECRET` and the five `GARAGE_*` variables. This package reads only the public `EXPO_PUBLIC_CLIENTES_API_URL` (see above).
+The backend refuses to boot without `DATABASE_URL`, `AUTH_JWT_SECRET` and the five `GARAGE_*` variables. This package reads only the public `EXPO_PUBLIC_CLIENTES_API_URL` (see above) and the public `MAPBOX_ACCESS_TOKEN`.
 
 ## Verified so far
 
 | Check                            | Result                                                    |
 | -------------------------------- | --------------------------------------------------------- |
-| `expo export --platform android` | Bundles to Hermes bytecode (4.07 MB) with the sign-in and Inicio code |
-| Jest (`jest-expo`)               | 246 tests: 167 for the shell, sign-in and the gate plus 79 for Inicio, the discovery calls, the protected-request seam and public end-to-end flows; every call is mocked, no real server or database |
-| Root `pnpm dev`                  | Backend plus both Metro servers answer, no port collision |
-| Device or emulator, APK build    | **Not verified**; no visual or real OTP-to-gate run has happened |
+| Jest (`jest-expo`)               | 305 tests (246 before the Mapa unit plus 59 for Mapa, location, the shared state, revocation ordering and the config); every call is mocked (fetch, the OS location module, the AppState adapter and the Mapbox components), no real server, tile or token |
+| Android Hermes export, `expo config` | The JS bundle exports to Hermes bytecode (4.43 MB) and the public config lists Android only, the Mapbox plugin and the two foreground location permissions: JS and config only |
+| Device or emulator, APK build    | **Not verified.** The map, tiles, the system prompt and the real permission transitions have never run on a device; the merged Android manifest is read from the library manifests, not from a Gradle build |
 
 ## Commands
 
@@ -104,4 +123,4 @@ The backend refuses to boot without `DATABASE_URL`, `AUTH_JWT_SECRET` and the fi
 
 ## Next step
 
-The native Mapa with foreground location (T2d.B) comes next and will reuse the protected-request path of Inicio; the wallet and claiming (T2e) follow. Login, session and profile code lives in `src/features/auth`; the feed and following live in `src/features/discovery`.
+The wallet and claiming (T2e) come next. Login, session and profile code lives in `src/features/auth`; the feed, following, Mapa and location live in `src/features/discovery`.

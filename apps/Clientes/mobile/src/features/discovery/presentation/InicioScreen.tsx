@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/features/auth";
 
 import { DISCOVERY_COPY } from "../domain/copy";
+import { DiscoveryProvider, useHasDiscoveryProvider } from "./DiscoveryProvider";
 import FeedCard from "./FeedCard";
 import { useDiscoveryFeed, type FeedError } from "./useDiscoveryFeed";
 
@@ -107,8 +108,15 @@ function InicioFeed() {
   );
 }
 
-/** Keyed by customer, so a different login never inherits another feed. */
+/**
+ * Keyed by customer, so a different login never inherits another feed. In the
+ * app the tabs layout provides the state Inicio shares with Mapa; rendered on
+ * its own (no provider above) it brings a private one, which has no Mapa to
+ * produce a position, so its feed is the followed-only feed.
+ */
 export default function InicioScreen() {
   const { user } = useAuth();
-  return <InicioFeed key={user?.id ?? "signed-out"} />;
+  const provided = useHasDiscoveryProvider();
+  const feed = <InicioFeed key={user?.id ?? "signed-out"} />;
+  return provided ? feed : <DiscoveryProvider>{feed}</DiscoveryProvider>;
 }

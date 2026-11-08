@@ -16,5 +16,12 @@ export const DISCOVERY_COPY = {
   unfollow: "Dejar de seguir",
   followError: "No pudimos actualizar el seguimiento. Intenta de nuevo",
   noDistance: "Sin distancia",
+  // Mapa (T2d.B). The location sentence is the orchestrator's formulation of
+  // the user's confirmed meaning (L15) and was retained in the copy approval.
+  mapTitle: "Mapa",
+  locationRequired:
+    "La ubicación es necesaria para mostrarte tiendas cercanas. Puedes activarla más adelante desde los ajustes de Savanhi en tu teléfono",
+  searchingStores: "Buscando tiendas cercanas…",
+  noNearbyStores: "No hay tiendas cercanas",
   retry: "Reintentar",
 } as const;

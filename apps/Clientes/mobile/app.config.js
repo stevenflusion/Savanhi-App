@@ -11,8 +11,16 @@ module.exports = {
     // Required by Expo Router. It is NOT a coupon link: deep links are out of
     // the MVP (C5), so no intent filter is declared.
     scheme: "savanhiclientes",
-    // No runtime permission is requested. Location, camera and any other
-    // permission arrive with the feature that needs them (C10).
+    // The public Mapbox token is read from the environment (a package `.env`
+    // loaded by Expo CLI, or a variable exported in the shell). It is NOT a
+    // secret and is never hardcoded; an empty value is a runtime prerequisite
+    // the Mapa screen reports instead of drawing a fake map.
+    extra: {
+      MAPBOX_ACCESS_TOKEN: process.env.MAPBOX_ACCESS_TOKEN ?? "",
+    },
+    // Only the two FOREGROUND location permissions are requested, and only
+    // when Mapa opens (C10). Nothing runs in the background and no camera,
+    // notification or storage permission exists.
     // `expo-secure-store` holds the session. Its plugin keeps those entries out
     // of Android Auto Backup (a restored backup cannot decrypt them); the
     // Face ID text it can set applies to iOS only and no biometric option is
@@ -20,6 +28,10 @@ module.exports = {
     plugins: [
       "expo-router",
       ["expo-secure-store", { configureAndroidBackup: true }],
+      // The native map. Mapbox no longer requires a downloads token, so none
+      // is configured. `expo-location` needs no config plugin: it adds only
+      // the permissions declared below and iOS usage text we do not ship.
+      ["@rnmapbox/maps", { RNMapboxMapsVersion: "11.20.1" }],
     ],
     updates: {
       enabled: false,
@@ -31,6 +43,10 @@ module.exports = {
     },
     android: {
       package: "com.savanhi.clientes",
+      permissions: [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+      ],
     },
   },
 };

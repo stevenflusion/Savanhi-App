@@ -40,16 +40,63 @@ describe("Savanhi Clientes bootstrap", () => {
       expect(clientes.android.package).not.toBe(tenderos.android.package);
     });
 
-    it("requests no runtime permission and registers no permission plugin", () => {
+    it("declares only the two foreground location permissions and no permission plugin", () => {
       const config = loadExpoConfig();
       const pluginNames = (config.plugins ?? []).map((plugin: unknown) =>
         Array.isArray(plugin) ? plugin[0] : plugin,
       );
 
-      expect(config.android.permissions ?? []).toEqual([]);
-      // `expo-secure-store` stores the session; it declares no permission on
-      // Android and no camera, location or notification plugin exists.
-      expect(pluginNames).toEqual(["expo-router", "expo-secure-store"]);
+      // Mapa is the only thing that asks the OS, and only for the foreground
+      // location (C10). Nothing runs in the background and no camera,
+      // notification, storage or foreground-service permission exists.
+      expect(config.android.permissions).toEqual([
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+      ]);
+      expect(JSON.stringify(config)).not.toMatch(
+        /BACKGROUND_LOCATION|FOREGROUND_SERVICE|CAMERA|NOTIFICATION|STORAGE/,
+      );
+      // `expo-location` needs no config plugin; the map has its own.
+      expect(pluginNames).toEqual([
+        "expo-router",
+        "expo-secure-store",
+        "@rnmapbox/maps",
+      ]);
+      expect(pluginNames).not.toContain("expo-location");
+    });
+
+    it("configures the Mapbox plugin like Tenderos and never a downloads token", () => {
+      const config = loadExpoConfig();
+      const tenderos = require("../../../Tenderos/mobile/app.config.js").expo;
+      const mapbox = (plugins: unknown[]) =>
+        plugins.find((p) => Array.isArray(p) && p[0] === "@rnmapbox/maps") as [
+          string,
+          Record<string, unknown>,
+        ];
+
+      expect(mapbox(config.plugins)[1]).toEqual({
+        RNMapboxMapsVersion: "11.20.1",
+      });
+      expect(mapbox(config.plugins)[1]).toEqual(mapbox(tenderos.plugins)[1]);
+      expect(JSON.stringify(config)).not.toMatch(/DownloadToken|sk\./);
+    });
+
+    it("takes the PUBLIC Mapbox token from the environment and hardcodes none", () => {
+      const before = process.env.MAPBOX_ACCESS_TOKEN;
+      try {
+        process.env.MAPBOX_ACCESS_TOKEN = "pk.synthetic.fixture";
+        expect(loadExpoConfig().extra.MAPBOX_ACCESS_TOKEN).toBe(
+          "pk.synthetic.fixture",
+        );
+        delete process.env.MAPBOX_ACCESS_TOKEN;
+        expect(loadExpoConfig().extra.MAPBOX_ACCESS_TOKEN).toBe("");
+      } finally {
+        if (before === undefined) delete process.env.MAPBOX_ACCESS_TOKEN;
+        else process.env.MAPBOX_ACCESS_TOKEN = before;
+      }
+      const source = fs.readFileSync(path.join(packageRoot, "app.config.js"), "utf8");
+      expect(source).not.toMatch(/pk\.[A-Za-z0-9]/);
+      expect(source).not.toMatch(/dotenv/);
     });
 
     it("declares no deep link or universal link for coupons (C5)", () => {
@@ -86,17 +133,23 @@ describe("Savanhi Clientes bootstrap", () => {
       expect(expoPort(clientes.scripts.dev)).toBe("8083");
     });
 
-    it("imports no Tenderos path and adds no map, camera or location SDK", () => {
+    it("imports no Tenderos path and adds exactly the map and location SDKs, at the Tenderos versions", () => {
       const pkg = readJson(path.join(packageRoot, "package.json"));
+      const tenderos = readJson(
+        path.join(repoRoot, "apps/Tenderos/mobile/package.json"),
+      );
       const dependencies = Object.keys(pkg.dependencies);
 
-      expect(dependencies).not.toEqual(
-        expect.arrayContaining(["@rnmapbox/maps"]),
+      expect(pkg.dependencies["@rnmapbox/maps"]).toBe(
+        tenderos.dependencies["@rnmapbox/maps"],
       );
-      expect(dependencies).not.toEqual(expect.arrayContaining(["expo-camera"]));
-      expect(dependencies).not.toEqual(
-        expect.arrayContaining(["expo-location"]),
+      expect(pkg.dependencies["expo-location"]).toBe(
+        tenderos.dependencies["expo-location"],
       );
+      for (const absent of ["expo-camera", "expo-notifications", "dotenv"]) {
+        expect(dependencies).not.toContain(absent);
+      }
+      expect(Object.keys(pkg.devDependencies)).not.toContain("dotenv");
       expect(JSON.stringify(pkg)).not.toMatch(/tenderos/i);
     });
   });

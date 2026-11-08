@@ -14,3 +14,35 @@ jest.mock("expo-secure-store", () => {
     }),
   };
 });
+
+// The native map is replaced by host components that keep their props, so
+// tests read the camera and marker coordinates the screen really passes. No
+// tile or Mapbox API call can happen.
+jest.mock("@rnmapbox/maps", () => {
+  // Not called `createElement` in place: the NativeWind Babel transform
+  // rewrites those calls and would reference an out-of-scope helper here.
+  const h = require("react")["create" + "Element"];
+  const host = (name) => {
+    const Component = ({ children, ...props }) => h(name, props, children);
+    Component.displayName = name;
+    return Component;
+  };
+  const Mapbox = {
+    setAccessToken: jest.fn(),
+    MapView: host("MapView"),
+    Camera: host("Camera"),
+    PointAnnotation: host("PointAnnotation"),
+  };
+  return { __esModule: true, default: Mapbox, ...Mapbox };
+});
+
+// The device location module. Every call is a mock the tests configure; no
+// default answer grants anything, and importing the module prompts nothing.
+jest.mock("expo-location", () => ({
+  Accuracy: { Balanced: 3 },
+  getForegroundPermissionsAsync: jest.fn(),
+  requestForegroundPermissionsAsync: jest.fn(),
+  getCurrentPositionAsync: jest.fn(),
+  watchPositionAsync: jest.fn(),
+  hasServicesEnabledAsync: jest.fn(),
+}));

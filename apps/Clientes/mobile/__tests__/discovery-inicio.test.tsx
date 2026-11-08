@@ -7,6 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react-native";
+import * as Location from "expo-location";
 import * as SecureStore from "expo-secure-store";
 import type {
   CustomerCouponFeedItem,
@@ -21,14 +22,20 @@ import {
 } from "@/src/features/auth/presentation/AuthProvider";
 import { CLIENT_SESSION_STORAGE_KEY } from "@/src/features/auth/infrastructure/session-storage";
 
-// A location module would be a new native dependency; importing one fails.
-jest.mock(
-  "expo-location",
-  () => {
-    throw new Error("the first Inicio must not touch location");
-  },
-  { virtual: true },
-);
+// `expo-location` is now an installed dependency and `jest.setup.js` replaces
+// it with mocks. Importing it prompts nothing; CALLING it would, so the first
+// Inicio is asserted to make no permission, status or position call at all.
+const expectNoLocationCalls = () => {
+  for (const name of [
+    "getForegroundPermissionsAsync",
+    "requestForegroundPermissionsAsync",
+    "getCurrentPositionAsync",
+    "watchPositionAsync",
+    "hasServicesEnabledAsync",
+  ] as const) {
+    expect((Location as any)[name]).not.toHaveBeenCalled();
+  }
+};
 
 // ---- tiny router simulation: real guards, mocked expo-router ---------------
 const mockNav = {
@@ -256,6 +263,7 @@ const settle = () =>
 
 beforeEach(() => {
   tid += 1;
+  Object.values(Location).forEach((fn) => (fn as any)?.mockClear?.());
   backing.clear();
   routes.clear();
   calls.length = 0;
@@ -304,6 +312,7 @@ describe("the first Inicio", () => {
     expect(request).not.toHaveBeenCalled();
     expect(geolocation.getCurrentPosition).not.toHaveBeenCalled();
     expect(geolocation.watchPosition).not.toHaveBeenCalled();
+    expectNoLocationCalls();
     request.mockRestore();
   });
 

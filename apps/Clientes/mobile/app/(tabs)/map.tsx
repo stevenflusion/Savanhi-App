@@ -1,17 +1,3 @@
-import { Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { MapScreen } from "@/src/features/discovery";
 
-export default function MapScreen() {
-  const insets = useSafeAreaInsets();
-
-  return (
-    <View className="flex-1 px-6" style={{ paddingTop: insets.top + 16 }}>
-      <Text
-        accessibilityRole="header"
-        className="text-2xl font-semibold text-slate-900"
-      >
-        Mapa
-      </Text>
-    </View>
-  );
-}
+export default MapScreen;
