@@ -2,7 +2,7 @@
 
 The customer app of the Savanhi cuponera. React Native + Expo (same SDK family as `apps/Tenderos/mobile`), Android only.
 
-Today it is a **navigation shell behind a customer login and profile gate**, with a working **Inicio** and a native **Mapa**: a floating bar with Inicio, Mapa, Billetera and Perfil, email-code sign-in, an Inicio that shows the customer's real coupons, and a Mapa of the nearby stores. Both let the customer follow and unfollow stores. Billetera and Perfil are still titled placeholders, and there is no QR or claim yet; those arrive with later units of `odd/tasks/clientes-app.md`.
+Today it is a **navigation shell behind a customer login and profile gate**, with a working **Inicio** and a native **Mapa**: a floating bar with Inicio, Mapa, Billetera and Perfil, email-code sign-in, an Inicio that shows the customer's real coupons, and a Mapa of the nearby stores. Both let the customer follow and unfollow stores. Inicio now also claims coupons, and **Billetera** lists the customer's claims and shows each available claim's QR (T2e.A). Returning a coupon (**Devolver**, T2e.B) is **not available yet**, and Perfil is still a titled placeholder; those arrive with later units of `odd/tasks/clientes-app.md`.
 
 ## Quick path
 
@@ -59,7 +59,7 @@ The followed-stores list (`GET /stores/followed`) is read **only when the feed i
 
 | Rule                  | Behavior                                                                                                                   |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Claiming              | **Not available yet.** There is no «Reclamar», QR or wallet action; `claimed` only means the customer already took the coupon |
+| Claiming              | «Reclamar» on a coupon the server does not call claimed (see Billetera below). `claimed` only means the customer already took the coupon, a released one included; it is never read as "in the wallet" and never offers a second claim |
 | Display               | No id, hour or minute is rendered; dates are date-only and are never turned into a `Date`, so no timezone can move a day    |
 | Storage               | The feed lives in memory only. Nothing but the session is persisted, and image URLs are never stored or rendered           |
 | Server text           | Never shown. `400`, `429`, `502` and offline all use the fixed Spanish above                                               |
@@ -86,6 +86,26 @@ Mapa shows a native map (`@rnmapbox/maps`) fixed on the customer's position with
 
 **Mapbox token and native build.** The map needs the PUBLIC token (`pk.…`), never a secret one, and no Mapbox downloads token (the plugin states it is no longer required). Put `MAPBOX_ACCESS_TOKEN` in this package's own `.env` (Expo CLI loads it before reading `app.config.js`) or export it in the shell (the name is already allowed by `turbo.json`); the repository root `.env` is NOT read by the Expo apps. The two new native modules mean **Expo Go cannot run Savanhi Clientes and a new Android development-client build is required** (`expo-dev-client` is already installed). The Android permissions declared in `app.config.js` are the two foreground location ones; `expo-location` needs no config plugin.
 
+## Billetera: claiming and the QR (T2e.A)
+
+**Claim.** «Reclamar» sends `POST /api/v1/clientes/coupons/:couponId/claims` once per coupon (a second tap while it is pending is the same request). Only the server's `201` counts: the card then shows «Cupón reclamado» and an explicit «Ver Billetera» action, and the customer stays in Inicio (there is no automatic navigation). A coupon claimed in this session stays confirmed even if an older feed read still says `claimed: false`. A failure shows «No pudimos reclamar el cupón. Intenta de nuevo», is never repeated by the app, and triggers exactly one authoritative feed re-read, because the backend has no idempotency key and may already have committed.
+
+**Wallet.** `GET /api/v1/clientes/claims` lists every claim, newest first, in the server's order, as one list: «Disponible» (`claimed`), «Canjeado», «Vencido» and «Devuelto». The status is the server's alone (never derived from the device clock) and the list is read when the tab gains focus and when the app returns to the foreground, never by polling. Only «Disponible» has «Ver QR». Copy: «Cargando billetera…», «Aún no tienes cupones. Reclama uno desde Inicio», «No pudimos cargar tu billetera. Intenta de nuevo» with «Reintentar». No id, clock time, coupon photo or image URL is rendered or stored.
+
+**QR secret.**
+
+| Rule | Behavior |
+| ---- | -------- |
+| Where it lives | The raw token goes to `expo-secure-store` as soon as the `201` or a re-issue arrives, under `savanhi-clientes-qr.<userId>.<claimId>` (token only; no status, catalog or image URL). Never `AsyncStorage`, a URL, a log, an error object or a text label |
+| What is drawn | The raw token, encoded with `qrcode` (browser entry, byte mode) into one `react-native-svg` path with a four-module quiet zone, black on white. Not a URL, no web view, no remote QR service. The only accessibility label is «Código QR del cupón» |
+| «Ver QR» | A stored token is shown with **no request**. With none stored, exactly one `POST /claims/:claimId/qr` is made (it kills the previous code at once), the new token is stored and shown. It is never re-issued on focus, on render, on reopening, or while a code is visible |
+| Failures | A failed re-issue shows «No pudimos mostrar tu código QR. Intenta de nuevo» with «Reintentar» and «Cerrar» and is never retried by the app. A `409` (redeemed, released, expired) closes the code, shows «Este cupón ya no está disponible» and re-reads the wallet. A keystore that cannot be written after a real claim is not a failed claim: the claim is real and «Ver QR» later issues a fresh code |
+| Privacy | The code is a native `Modal` over Billetera; it clears and closes when the app leaves the foreground, when the screen unmounts and when the gate closes, and an answer that arrives later is ignored |
+| Ownership | One module-held queue serializes every keystore operation for every provider. Each operation captures an owner that never becomes current again once its provider is gone, checks it before and after every await, and a stale write cleans up only the exact value it wrote, inside the same queue turn, so an old operation cannot delete a newer token. The user id in the key scopes an entry; it is not authorization |
+| Logout | Stored tokens are **not** deleted on logout (the keystore cannot enumerate keys and an index would persist a catalog): they stay encrypted, scoped to that user id, and a lost one is recoverable by re-issue. Release and a wallet read that shows a claim is no longer available delete that claim's token |
+
+**Not in this unit and not claimed.** «Devolver» and its confirmation (T2e.B). The QR was proved only in Jest (the production renderer's own path is decoded back with `jsqr`) and in an Android Hermes export; **no phone scanned it**, and nothing ran on a device, emulator or APK. `react-native-svg` is a native module, so the Android development client must be rebuilt before the QR can be seen on a device. The `router.push("/wallet")` of «Ver Billetera» was exercised only against a mocked router.
+
 ## API address
 
 | Build       | Address                                                                                                                                  |
@@ -110,9 +130,10 @@ The backend refuses to boot without `DATABASE_URL`, `AUTH_JWT_SECRET` and the fi
 
 | Check                            | Result                                                    |
 | -------------------------------- | --------------------------------------------------------- |
-| Jest (`jest-expo`)               | 305 tests (246 before the Mapa unit plus 59 for Mapa, location, the shared state, revocation ordering and the config); every call is mocked (fetch, the OS location module, the AppState adapter and the Mapbox components), no real server, tile or token |
-| Android Hermes export, `expo config` | The JS bundle exports to Hermes bytecode (4.43 MB) and the public config lists Android only, the Mapbox plugin and the two foreground location permissions: JS and config only |
-| Device or emulator, APK build    | **Not verified.** The map, tiles, the system prompt and the real permission transitions have never run on a device; the merged Android manifest is read from the library manifests, not from a Gradle build |
+| Jest (`jest-expo`)               | 395 tests (305 before the wallet unit, plus 78 for claiming, the wallet, the QR store, renderer and repository and the dependency pins, plus 12 public-flow regressions in `wallet-public-flow` and `wallet-navigation`); every call is mocked (fetch, the keystore, the OS location module, the AppState adapter and the Mapbox components), no real server, tile or token. `react-native-svg`, `qrcode` and `jsqr` run for real; `wallet-navigation` uses the real `expo-router`, so «Ver Billetera» is proven to reach the real `/wallet` tab route |
+| QR proof                         | The production renderer's own SVG path is rasterized and decoded back with `jsqr` to the exact token, including a mixed-case token with `-` and `_`, and with `TextEncoder` and `Buffer` removed, so it does not rely on Hermes globals. This is a Jest decode, **not a phone scan** |
+| Android Hermes export, `expo config` | The JS bundle exports to Hermes bytecode (4.71 MB) and the public config lists Android only, the Mapbox plugin and the two foreground location permissions: JS and config only |
+| Device or emulator, APK build    | **Not verified.** The map, tiles, the QR on a screen, the system prompt and the real permission transitions have never run on a device; the merged Android manifest is read from the library manifests, not from a Gradle build |
 
 ## Commands
 
@@ -123,4 +144,4 @@ The backend refuses to boot without `DATABASE_URL`, `AUTH_JWT_SECRET` and the fi
 
 ## Next step
 
-The wallet and claiming (T2e) come next. Login, session and profile code lives in `src/features/auth`; the feed, following, Mapa and location live in `src/features/discovery`.
+Returning a coupon with its confirmation («Devolver», T2e.B) comes next. Login, session and profile code lives in `src/features/auth`; the feed, following, Mapa and location live in `src/features/discovery`; claiming, the wallet and the QR live in `src/features/wallet`.

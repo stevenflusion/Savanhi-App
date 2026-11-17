@@ -2,6 +2,7 @@ import { FlatList, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/features/auth";
+import { WALLET_COPY } from "@/src/features/wallet/domain/copy";
 
 import { DISCOVERY_COPY } from "../domain/copy";
 import { DiscoveryProvider, useHasDiscoveryProvider } from "./DiscoveryProvider";
@@ -83,6 +84,8 @@ function InicioFeed() {
             onToggleFollow={() =>
               void feed.changeFollow(item.store.id, !feed.isFollowed(item))
             }
+            claim={feed.claimState(item)}
+            onClaim={() => void feed.claimCoupon?.(item.coupon.id)}
           />
         )}
       />
@@ -100,6 +103,7 @@ function InicioFeed() {
       {feed.followError ? (
         <ErrorNotice text={DISCOVERY_COPY.followError} />
       ) : null}
+      {feed.claimError ? <ErrorNotice text={WALLET_COPY.claimError} /> : null}
       {items !== null && error === "coupons" ? (
         <ErrorNotice text={ERROR_TEXT.coupons} onRetry={feed.reload} />
       ) : null}

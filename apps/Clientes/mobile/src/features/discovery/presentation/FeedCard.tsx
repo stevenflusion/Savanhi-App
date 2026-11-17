@@ -1,31 +1,41 @@
 import type { CustomerCouponFeedItem } from "@repo/api-contracts";
 import { Pressable, Text, View } from "react-native";
 
+import { WALLET_COPY } from "@/src/features/wallet/domain/copy";
+import ViewWalletAction from "@/src/features/wallet/presentation/ViewWalletAction";
+
 import { DISCOVERY_COPY } from "../domain/copy";
 import {
   describeBenefit,
   formatDistance,
   formatValidity,
 } from "../domain/format";
+import type { ClaimState } from "./useDiscoveryFeed";
 
 type Props = {
   item: CustomerCouponFeedItem;
   followed: boolean;
   pending: boolean;
   onToggleFollow: () => void;
+  /** `null` or absent: no wallet is mounted, so no claim action is offered. */
+  claim?: ClaimState | null;
+  onClaim?: () => void;
 };
 
 /**
  * One coupon of the feed. Every value is a field of the server item; no id or
- * time is rendered, and there is deliberately no claim action here: `claimed`
- * only means this customer already took the coupon, never that it is in the
- * wallet or can be taken again.
+ * time is rendered. `claimed` only means this customer already took the coupon,
+ * never that it is in the wallet or can be taken again, so a coupon the server
+ * calls claimed offers no claim action; only a claim made in this session shows
+ * the confirmation and the explicit way to the wallet.
  */
 export default function FeedCard({
   item,
   followed,
   pending,
   onToggleFollow,
+  claim = null,
+  onClaim,
 }: Props) {
   const { coupon, store } = item;
   const benefit = describeBenefit(coupon);
@@ -86,6 +96,33 @@ export default function FeedCard({
           </Text>
         </Pressable>
       </View>
+
+      {claim === "available" || claim === "claiming" ? (
+        <Pressable
+          onPress={onClaim}
+          disabled={claim === "claiming"}
+          accessibilityRole="button"
+          accessibilityState={{
+            busy: claim === "claiming",
+            disabled: claim === "claiming",
+          }}
+          className={`mt-3 h-12 items-center justify-center rounded-full bg-black ${
+            claim === "claiming" ? "opacity-50" : ""
+          }`}
+        >
+          <Text className="text-base font-medium text-white">
+            {WALLET_COPY.claim}
+          </Text>
+        </Pressable>
+      ) : null}
+      {claim === "confirmed" ? (
+        <View className="mt-3 flex-row items-center justify-between">
+          <Text className="text-sm font-medium text-emerald-700">
+            {WALLET_COPY.claimed}
+          </Text>
+          <ViewWalletAction />
+        </View>
+      ) : null}
     </View>
   );
 }

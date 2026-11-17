@@ -133,7 +133,18 @@ describe("Savanhi Clientes bootstrap", () => {
       expect(expoPort(clientes.scripts.dev)).toBe("8083");
     });
 
-    it("imports no Tenderos path and adds exactly the map and location SDKs, at the Tenderos versions", () => {
+    it("adds the wallet QR renderer, its encoder and its proof tools at the pinned ranges, with no plain storage", () => {
+      const pkg = readJson(path.join(packageRoot, "package.json"));
+      expect(pkg.dependencies["react-native-svg"]).toBe("~15.12.1");
+      expect(pkg.dependencies["qrcode"]).toBe("^1.5.4");
+      expect(pkg.devDependencies["@types/qrcode"]).toBe("^1.5.6");
+      expect(pkg.devDependencies["jsqr"]).toBe("1.4.0");
+      expect(Object.keys(pkg.dependencies)).not.toContain(
+        "@react-native-async-storage/async-storage",
+      );
+    });
+
+    it("imports no Tenderos path and keeps the map and location SDKs at the Tenderos versions", () => {
       const pkg = readJson(path.join(packageRoot, "package.json"));
       const tenderos = readJson(
         path.join(repoRoot, "apps/Tenderos/mobile/package.json"),

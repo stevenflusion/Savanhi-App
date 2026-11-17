@@ -44,6 +44,11 @@ type DiscoveryShared = {
   /** Increases once per confirmed follow change, never on a read. */
   revision: number;
   changeFollow: (storeId: string, following: boolean) => Promise<void>;
+  /**
+   * Asks the feed for one authoritative re-read. It is the same revision seam a
+   * follow uses; Billetera calls it after a claim, and it never loops by itself.
+   */
+  refreshFeed: () => void;
 };
 
 const DiscoveryContext = createContext<DiscoveryShared | null>(null);
@@ -248,6 +253,10 @@ function SharedState({
     [repository],
   );
 
+  const refreshFeed = useCallback(() => {
+    setRevision((current) => current + 1);
+  }, []);
+
   const value = useMemo<DiscoveryShared>(
     () => ({
       repository,
@@ -259,6 +268,7 @@ function SharedState({
       followError,
       revision,
       changeFollow,
+      refreshFeed,
     }),
     [
       repository,
@@ -269,6 +279,7 @@ function SharedState({
       followError,
       revision,
       changeFollow,
+      refreshFeed,
     ],
   );
 

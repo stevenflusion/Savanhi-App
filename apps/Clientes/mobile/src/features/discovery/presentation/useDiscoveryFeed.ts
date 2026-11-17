@@ -2,11 +2,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CustomerCouponFeedItem } from "@repo/api-contracts";
 
 import { useAuth } from "@/src/features/auth";
+import { useOptionalWallet } from "@/src/features/wallet/presentation/wallet-context";
 
 import { coordinatesKey } from "../domain/location";
 import { useDiscoveryShared } from "./DiscoveryProvider";
 
 export type FeedError = "coupons" | "stores";
+
+/**
+ * What a card offers about claiming. `none` is a coupon this customer already
+ * took (a released one included): the flag is never read as "in your wallet".
+ */
+export type ClaimState = "available" | "claiming" | "confirmed" | "none";
 
 type FeedState = {
   /** `null` until the first read answers; kept while a later read fails. */
@@ -33,6 +40,8 @@ export function useDiscoveryFeed() {
   const { runProtected } = useAuth();
   const shared = useDiscoveryShared();
   const { repository, revision, followOverride, changeFollow } = shared;
+  // `null` when no wallet is mounted above (Inicio on its own): no claim action.
+  const wallet = useOptionalWallet();
   const coordinates = shared.location.coordinates;
   const key = coordinatesKey(coordinates);
   const [state, setState] = useState<FeedState>(EMPTY);
@@ -109,5 +118,17 @@ export function useDiscoveryFeed() {
       followOverride[item.store.id] ?? item.followed,
     changeFollow,
     reload: load,
+    claimError: wallet?.claimError ?? false,
+    claimCoupon: wallet?.claimCoupon,
+    // A coupon this session already took wins over any older read that still
+    // says `claimed: false`, so a stale answer can never offer a second claim.
+    claimState: (item: CustomerCouponFeedItem): ClaimState | null => {
+      if (!wallet) return null;
+      if (wallet.claimedCoupons.has(item.coupon.id)) return "confirmed";
+      if (item.claimed) return "none";
+      return wallet.pendingCoupons.includes(item.coupon.id)
+        ? "claiming"
+        : "available";
+    },
   };
 }
