@@ -99,11 +99,11 @@ describe("T2e.A Billetera: one list, four statuses", () => {
     expect(callsTo(CLAIMS_GET)).toHaveLength(1);
   });
 
-  it("offers «Ver QR» only on the available claim and no «Devolver» at all yet", async () => {
+  it("offers «Ver QR» and «Devolver» only on the available claim", async () => {
     await openWallet(ALL_FOUR());
     await walletView().findByText("Disponible");
     expect(walletView().getAllByText(COPY.viewQr)).toHaveLength(1);
-    expect(walletView().queryByText("Devolver")).toBeNull();
+    expect(walletView().getAllByText("Devolver")).toHaveLength(1);
   });
 
   it("shows only coupon, validity dates and store: no id, no time, no secret", async () => {

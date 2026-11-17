@@ -6,14 +6,25 @@ import { describeBenefit, formatValidity } from "@/src/features/discovery/domain
 import { canShowQr } from "../domain/claim";
 import { STATUS_LABEL, WALLET_COPY } from "../domain/copy";
 
-type Props = { claim: CustomerClaim; onViewQr: () => void };
+type Props = {
+  claim: CustomerClaim;
+  onViewQr: () => void;
+  onRelease: () => void;
+  /** The return is on its way: no second return and no code for this claim. */
+  releasing: boolean;
+};
 
 /**
  * One claim of the wallet. Only the coupon, its validity (date only), the store
  * and the server's status are shown: no id, no clock time and no secret. «Ver QR»
- * is offered for an available claim and for nothing else.
+ * and «Devolver» are offered for an available claim and for nothing else.
  */
-export default function ClaimCard({ claim, onViewQr }: Props) {
+export default function ClaimCard({
+  claim,
+  onViewQr,
+  onRelease,
+  releasing,
+}: Props) {
   const { coupon, store } = claim;
   const benefit = describeBenefit(coupon);
   const validity = formatValidity(coupon.validFrom, coupon.validTo);
@@ -39,16 +50,27 @@ export default function ClaimCard({ claim, onViewQr }: Props) {
         <Text className="text-sm font-medium text-emerald-700">
           {STATUS_LABEL[claim.status]}
         </Text>
-        {canShowQr(claim.status) ? (
-          <Pressable
-            onPress={onViewQr}
-            accessibilityRole="button"
-            className="h-10 items-center justify-center rounded-full bg-black px-5"
-          >
-            <Text className="text-sm font-medium text-white">
-              {WALLET_COPY.viewQr}
-            </Text>
-          </Pressable>
+        {canShowQr(claim.status) && !releasing ? (
+          <View className="flex-row gap-2">
+            <Pressable
+              onPress={onRelease}
+              accessibilityRole="button"
+              className="h-10 items-center justify-center rounded-full border border-slate-300 bg-white px-5"
+            >
+              <Text className="text-sm font-medium text-slate-900">
+                {WALLET_COPY.release}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={onViewQr}
+              accessibilityRole="button"
+              className="h-10 items-center justify-center rounded-full bg-black px-5"
+            >
+              <Text className="text-sm font-medium text-white">
+                {WALLET_COPY.viewQr}
+              </Text>
+            </Pressable>
+          </View>
         ) : null}
       </View>
     </View>

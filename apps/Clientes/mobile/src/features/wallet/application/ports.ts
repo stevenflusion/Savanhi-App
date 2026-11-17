@@ -20,6 +20,14 @@ export type WalletRemoteRepository = {
     accessToken: string,
     claimId: string,
   ) => Promise<AuthRemoteResult<CustomerClaim>>;
+  /**
+   * Gives one of the customer's own claims back. Only a `released` claim with
+   * no token counts as a confirmed answer; the claim can never be re-claimed.
+   */
+  releaseClaim: (
+    accessToken: string,
+    claimId: string,
+  ) => Promise<AuthRemoteResult<CustomerClaim>>;
 };
 
 /**

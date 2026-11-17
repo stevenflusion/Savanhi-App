@@ -22,6 +22,7 @@ import { createWalletFetchRepository } from "../infrastructure/wallet-fetch-repo
 import {
   WalletContext,
   type QrResult,
+  type ReleaseResult,
   type WalletShared,
 } from "./wallet-context";
 
@@ -29,6 +30,15 @@ const defaultRepository = createWalletFetchRepository();
 const defaultQrStore = createQrTokenStore();
 
 const IGNORED: QrResult = { status: "ignored" };
+
+/** A claim given back in this session reads `released`, with no code. */
+const asReleased = (
+  claim: CustomerClaim,
+  released: ReadonlySet<string>,
+): CustomerClaim =>
+  released.has(claim.id)
+    ? { ...claim, status: "released", qrToken: null }
+    : claim;
 
 type Props = {
   repository?: WalletRemoteRepository;
@@ -82,6 +92,9 @@ function SharedState({
   const [claimsStatus, setClaimsStatus] =
     useState<WalletShared["claimsStatus"]>("idle");
   const readSequence = useRef(0);
+  // Claims this customer gave back in this session, and the ones on their way.
+  const released = useRef(new Set<string>());
+  const releasing = useRef(new Set<string>());
 
   const loadClaims = useCallback(async () => {
     const owner = currentOwner();
@@ -103,10 +116,12 @@ function SharedState({
       setClaimsStatus("error");
       return;
     }
-    setClaims(outcome.data);
+    // A read that started before a confirmed return cannot undo it.
+    const data = outcome.data.map((claim) => asReleased(claim, released.current));
+    setClaims(data);
     setClaimsStatus("idle");
     // A claim the server no longer calls available has no use for its token.
-    for (const claim of outcome.data) {
+    for (const claim of data) {
       if (claim.status !== "claimed") void qrStore.remove(owner, claim.id);
     }
   }, [currentOwner, repository, qrStore]);
@@ -166,11 +181,16 @@ function SharedState({
       const running = inFlight.current.get(claimId);
       if (running) return running;
       const owner = currentOwner();
-      if (!owner) return Promise.resolve(IGNORED);
+      // A claim that is being (or was) given back has no code to show.
+      const gone = () =>
+        released.current.has(claimId) || releasing.current.has(claimId);
+      if (!owner || gone()) return Promise.resolve(IGNORED);
 
       const work = (async (): Promise<QrResult> => {
         const stored = await qrStore.read(owner, claimId);
-        if (stored.status === "stale" || !owner.isCurrent()) return IGNORED;
+        if (stored.status === "stale" || !owner.isCurrent() || gone()) {
+          return IGNORED;
+        }
         if (stored.status === "ok") return { status: "ok", token: stored.token };
         // An unreadable keystore is not an absent token: never re-issue on a guess.
         if (stored.status === "error") return { status: "failed" };
@@ -179,7 +199,9 @@ function SharedState({
         const outcome = await runProtectedRef.current((token) =>
           repository.reissueQr(token, claimId),
         );
-        if (!owner.isCurrent() || outcome.status === "ignored") return IGNORED;
+        if (!owner.isCurrent() || outcome.status === "ignored" || gone()) {
+          return IGNORED;
+        }
         if (outcome.status === "failed") {
           return outcome.httpStatus === 409
             ? { status: "unavailable" }
@@ -191,6 +213,11 @@ function SharedState({
         // Shown from memory even if the write fails; the owner decides it.
         await qrStore.write(owner, claimId, token);
         if (!owner.isCurrent()) return IGNORED;
+        if (gone()) {
+          // The claim was given back while the write was open: drop the token.
+          void qrStore.remove(owner, claimId);
+          return IGNORED;
+        }
         return { status: "ok", token };
       })().finally(() => {
         inFlight.current.delete(claimId);
@@ -199,6 +226,55 @@ function SharedState({
       return work;
     },
     [currentOwner, repository, qrStore],
+  );
+
+  // ---- giving a claim back: the one release path -------------------------------------
+  const [releasingClaims, setReleasingClaims] = useState<string[]>([]);
+
+  const releaseClaim = useCallback(
+    async (claimId: string): Promise<ReleaseResult> => {
+      const owner = currentOwner();
+      // One return per claim at a time: a second confirmation is the same intent.
+      if (!owner || releasing.current.has(claimId)) return "ignored";
+      releasing.current.add(claimId);
+      setReleasingClaims([...releasing.current]);
+
+      try {
+        const outcome = await runProtectedRef.current((token) =>
+          repository.releaseClaim(token, claimId),
+        );
+        if (!owner.isCurrent() || outcome.status === "ignored") return "ignored";
+
+        if (outcome.status === "failed") {
+          if (outcome.httpStatus !== 409) return "failed";
+          // Redeemed, released or expired: the server is the authority, so read
+          // it again instead of guessing, and never claim a return happened.
+          void loadClaims();
+          refreshFeedRef.current();
+          return "unavailable";
+        }
+
+        // Confirmed. From now on this claim reads `released` whatever an older
+        // wallet read still says, and no code may be shown or stored for it.
+        released.current.add(claimId);
+        setClaims((current) =>
+          current
+            ? current.map((claim) => asReleased(claim, released.current))
+            : current,
+        );
+        // Best effort and inside the shared queue: a key that cannot be removed
+        // never turns a confirmed return into a failed one.
+        void qrStore.remove(owner, claimId);
+        // The return changes the stock counters; `claimed` stays true (C4).
+        void loadClaims();
+        refreshFeedRef.current();
+        return "released";
+      } finally {
+        releasing.current.delete(claimId);
+        if (owner.isCurrent()) setReleasingClaims([...releasing.current]);
+      }
+    },
+    [currentOwner, repository, qrStore, loadClaims],
   );
 
   const value = useMemo<WalletShared>(
@@ -211,6 +287,8 @@ function SharedState({
       claimError,
       claimCoupon,
       resolveQr,
+      releaseClaim,
+      releasingClaims,
     }),
     [
       claims,
@@ -221,6 +299,8 @@ function SharedState({
       claimError,
       claimCoupon,
       resolveQr,
+      releaseClaim,
+      releasingClaims,
     ],
   );
 

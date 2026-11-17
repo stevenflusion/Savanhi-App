@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WALLET_COPY } from "../domain/copy";
 import ClaimCard from "./ClaimCard";
 import QrModal from "./QrModal";
+import ReleaseConfirmation from "./ReleaseConfirmation";
 import { useWallet } from "./wallet-context";
 
 function Notice({ text, onRetry }: { text: string; onRetry?: () => void }) {
@@ -41,9 +42,27 @@ function Message({ text }: { text: string }) {
  */
 export default function WalletScreen() {
   const insets = useSafeAreaInsets();
-  const { claims, claimsStatus, loadClaims } = useWallet();
+  const { claims, claimsStatus, loadClaims, releaseClaim, releasingClaims } =
+    useWallet();
   const [qrClaimId, setQrClaimId] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [confirmClaimId, setConfirmClaimId] = useState<string | null>(null);
+  // The one outcome notice of a return; a new action replaces it.
+  const [releaseNotice, setReleaseNotice] = useState<string | null>(null);
+
+  const confirmRelease = useCallback(() => {
+    const claimId = confirmClaimId;
+    if (!claimId) return;
+    setConfirmClaimId(null);
+    setQrClaimId((current) => (current === claimId ? null : current));
+    setReleaseNotice(null);
+    void releaseClaim(claimId).then((result) => {
+      // `ignored` means a second tap or a gone owner: nothing may be shown.
+      if (result === "released") setReleaseNotice(WALLET_COPY.released);
+      else if (result === "unavailable") setReleaseNotice(WALLET_COPY.unavailable);
+      else if (result === "failed") setReleaseNotice(WALLET_COPY.releaseError);
+    });
+  }, [confirmClaimId, releaseClaim]);
   const focused = useRef(false);
 
   useFocusEffect(
@@ -82,9 +101,16 @@ export default function WalletScreen() {
         renderItem={({ item }) => (
           <ClaimCard
             claim={item}
+            releasing={releasingClaims.includes(item.id)}
             onViewQr={() => {
               setUnavailable(false);
+              setReleaseNotice(null);
               setQrClaimId(item.id);
+            }}
+            onRelease={() => {
+              setUnavailable(false);
+              setReleaseNotice(null);
+              setConfirmClaimId(item.id);
             }}
           />
         )}
@@ -101,10 +127,21 @@ export default function WalletScreen() {
         {WALLET_COPY.title}
       </Text>
       {unavailable ? <Notice text={WALLET_COPY.unavailable} /> : null}
+      {releaseNotice ? <Notice text={releaseNotice} /> : null}
       {claims !== null && claimsStatus === "error" ? (
         <Notice text={WALLET_COPY.loadError} onRetry={() => void loadClaims()} />
       ) : null}
       {body}
+      {confirmClaimId ? (
+        <ReleaseConfirmation
+          onConfirm={confirmRelease}
+          onCancel={() => {
+            // Nothing was asked of the server and nothing is stored or changed.
+            setConfirmClaimId(null);
+            setReleaseNotice(WALLET_COPY.releaseCancelled);
+          }}
+        />
+      ) : null}
       {qrClaimId ? (
         <QrModal
           key={qrClaimId}

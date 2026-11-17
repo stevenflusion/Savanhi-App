@@ -19,6 +19,14 @@ export const WALLET_COPY = {
   /** The only label of the code image; it never carries the code itself. */
   qrAccessibility: "Código QR del cupón",
   unavailable: "Este cupón ya no está disponible",
+  // «Devolver» (T2e.B): the confirmation is approved verbatim in L21, the
+  // outcomes and the error in L22.
+  release: "Devolver",
+  cancel: "Cancelar",
+  releaseConfirm: "¿Devolver este cupón? No podrás volver a reclamarlo",
+  released: "Cupón devuelto",
+  releaseCancelled: "Devolución cancelada",
+  releaseError: "No pudimos devolver el cupón. Intenta de nuevo",
   retry: "Reintentar",
   close: "Cerrar",
 } as const;

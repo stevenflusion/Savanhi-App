@@ -474,7 +474,7 @@ describe("T2e.A public flows", () => {
     expect(buildQrDrawing("short")).toBeNull();
   });
 
-  it("the wallet shows the four statuses in the server's order, «Ver QR» only on «Disponible» and no «Devolver»", async () => {
+  it("the wallet shows the four statuses in the server's order, «Ver QR» and «Devolver» only on «Disponible»", async () => {
     const server = serve();
     await open();
     server.claims = [
@@ -488,7 +488,7 @@ describe("T2e.A public flows", () => {
       expect(wallet().getByText(label)).toBeTruthy();
     }
     expect(wallet().getAllByText("Ver QR")).toHaveLength(1);
-    expect(wallet().queryByText("Devolver")).toBeNull();
+    expect(wallet().getAllByText("Devolver")).toHaveLength(1);
     expect(wallet().queryByText(/d1111|2026-11-10/)).toBeNull();
   });
 });

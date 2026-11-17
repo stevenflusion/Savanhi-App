@@ -150,3 +150,69 @@ describe("wallet repository", () => {
     expect(JSON.stringify(result)).not.toContain("released");
   });
 });
+
+describe("wallet repository: release", () => {
+  const released = (o: Partial<CustomerClaim> = {}) =>
+    claim({ status: "released", qrToken: null, ...o });
+
+  it("releases with a bare authenticated POST and returns the released claim", async () => {
+    answer(200, { data: released() });
+    const result = await repo().releaseClaim("access-1", CLAIM);
+    expect(result).toEqual({ success: true, data: released() });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.url).toBe(`${BASE}/api/v1/clientes/claims/${CLAIM}/release`);
+    expect(seen[0]!.init.method).toBe("POST");
+    expect(seen[0]!.init.headers).toEqual({ Authorization: "Bearer access-1" });
+    expect(seen[0]!.init.body).toBeUndefined();
+  });
+
+  it("encodes the claim id into the path instead of trusting it", async () => {
+    answer(200, { data: released({ id: "x/../y" }) });
+    await repo().releaseClaim("a", "x/../y");
+    expect(seen[0]!.url).toBe(`${BASE}/api/v1/clientes/claims/x%2F..%2Fy/release`);
+  });
+
+  it.each([
+    ["a claim that is still claimed", claim({ status: "claimed" })],
+    ["an expired claim", claim({ status: "expired" })],
+    ["a released claim that still carries a token", released({ qrToken: TOKEN })],
+    ["another claim", released({ id: "another" })],
+    ["a missing coupon", { ...released(), coupon: undefined }],
+    ["no data at all", undefined],
+  ])("does not accept %s as a confirmed release", async (_label, data) => {
+    answer(200, { data });
+    const result = await repo().releaseClaim("a", CLAIM);
+    expect(result).toMatchObject({ success: false, status: 200 });
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+  });
+
+  it("passes a 409 as a status only, never the server's text", async () => {
+    answer(409, { error: "This claim was already released." });
+    const result = await repo().releaseClaim("a", CLAIM);
+    expect(result).toMatchObject({ success: false, status: 409, unauthorized: false });
+    expect(JSON.stringify(result)).not.toContain("already released");
+  });
+
+  it("flags a 401 and keeps the eligibility code of a 403", async () => {
+    answer(401, {});
+    expect(await repo().releaseClaim("a", CLAIM)).toMatchObject({
+      success: false,
+      unauthorized: true,
+    });
+    answer(403, { error: "x", details: { eligibility: "underage" } });
+    expect(await repo().releaseClaim("a", CLAIM)).toMatchObject({
+      success: false,
+      status: 403,
+      eligibility: "underage",
+    });
+  });
+
+  it("answers a network failure without a status and without throwing", async () => {
+    (global as any).fetch = jest.fn(async () => {
+      throw new Error("offline");
+    });
+    const result = await repo().releaseClaim("a", CLAIM);
+    expect(result).toMatchObject({ success: false, unauthorized: false });
+    expect((result as { status?: number }).status).toBeUndefined();
+  });
+});

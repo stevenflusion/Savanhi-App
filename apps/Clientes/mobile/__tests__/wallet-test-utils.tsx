@@ -55,6 +55,8 @@ export const CLAIM_PATH = (couponId: string) =>
 export const CLAIMS_GET = "GET /api/v1/clientes/claims";
 export const REISSUE = (claimId: string) =>
   `POST /api/v1/clientes/claims/${claimId}/qr`;
+export const RELEASE = (claimId: string) =>
+  `POST /api/v1/clientes/claims/${claimId}/release`;
 
 export const COPY = {
   ...MAP_COPY,
@@ -72,6 +74,8 @@ export const COPY = {
   qrLabel: "Código QR del cupón",
   unavailable: "Este cupón ya no está disponible",
   close: "Cerrar",
+  release: "Devolver",
+  cancel: "Cancelar",
 };
 
 export const qrKey = (claimId: string, userId = "user-1") =>
@@ -150,6 +154,14 @@ export function serveWallet() {
     reply(200, { data: wallet.claims.map((c) => ({ ...c, qrToken: null })) }),
   );
   for (const id of [CLAIM_1, CLAIM_2, CLAIM_3, CLAIM_4]) {
+    // The server's return: the claim turns `released`, no token, and the feed
+    // keeps calling the coupon claimed (C4).
+    routes.set(RELEASE(id), () => {
+      const claim = wallet.claims.find((c) => c.id === id)!;
+      const released = { ...claim, status: "released" as const, qrToken: null };
+      wallet.claims = wallet.claims.map((c) => (c.id === id ? released : c));
+      return reply(200, { data: released });
+    });
     routes.set(REISSUE(id), () => {
       const claim = wallet.claims.find((c) => c.id === id)!;
       return reply(200, {
@@ -197,7 +209,8 @@ export const visited: string[] = [];
 export function WalletApp() {
   const [path, setPath] = React.useState("/");
   mockNav.go = (href: string) => {
-    if (href.startsWith("/auth")) setPath(href);
+    // The guard sends a signed-in customer back to the tabs.
+    if (href.startsWith("/auth") || href === "/") setPath(href);
     else visited.push(href);
   };
   mockNav.path = path;

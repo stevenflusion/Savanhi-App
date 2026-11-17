@@ -2,7 +2,7 @@
 
 The customer app of the Savanhi cuponera. React Native + Expo (same SDK family as `apps/Tenderos/mobile`), Android only.
 
-Today it is a **navigation shell behind a customer login and profile gate**, with a working **Inicio** and a native **Mapa**: a floating bar with Inicio, Mapa, Billetera and Perfil, email-code sign-in, an Inicio that shows the customer's real coupons, and a Mapa of the nearby stores. Both let the customer follow and unfollow stores. Inicio now also claims coupons, and **Billetera** lists the customer's claims and shows each available claim's QR (T2e.A). Returning a coupon (**Devolver**, T2e.B) is **not available yet**, and Perfil is still a titled placeholder; those arrive with later units of `odd/tasks/clientes-app.md`.
+Today it is a **navigation shell behind a customer login and profile gate**, with a working **Inicio** and a native **Mapa**: a floating bar with Inicio, Mapa, Billetera and Perfil, email-code sign-in, an Inicio that shows the customer's real coupons, and a Mapa of the nearby stores. Both let the customer follow and unfollow stores. Inicio now also claims coupons, and **Billetera** lists the customer's claims and shows each available claim's QR (T2e.A). **Devolver** (T2e.B) gives an available claim back after a confirmation, and Perfil is still a titled placeholder; those arrive with later units of `odd/tasks/clientes-app.md`.
 
 ## Quick path
 
@@ -104,7 +104,23 @@ Mapa shows a native map (`@rnmapbox/maps`) fixed on the customer's position with
 | Ownership | One module-held queue serializes every keystore operation for every provider. Each operation captures an owner that never becomes current again once its provider is gone, checks it before and after every await, and a stale write cleans up only the exact value it wrote, inside the same queue turn, so an old operation cannot delete a newer token. The user id in the key scopes an entry; it is not authorization |
 | Logout | Stored tokens are **not** deleted on logout (the keystore cannot enumerate keys and an index would persist a catalog): they stay encrypted, scoped to that user id, and a lost one is recoverable by re-issue. Release and a wallet read that shows a claim is no longer available delete that claim's token |
 
-**Not in this unit and not claimed.** «Devolver» and its confirmation (T2e.B). The QR was proved only in Jest (the production renderer's own path is decoded back with `jsqr`) and in an Android Hermes export; **no phone scanned it**, and nothing ran on a device, emulator or APK. `react-native-svg` is a native module, so the Android development client must be rebuilt before the QR can be seen on a device. The `router.push("/wallet")` of «Ver Billetera» was exercised only against a mocked router.
+**Not claimed.** The QR was proved only in Jest (the production renderer's own path is decoded back with `jsqr`) and in an Android Hermes export; **no phone scanned it**, and nothing ran on a device, emulator or APK. `react-native-svg` is a native module, so the Android development client must be rebuilt before the QR can be seen on a device. The `router.push("/wallet")` of «Ver Billetera» was exercised only against a mocked router.
+
+## Billetera: giving a coupon back (T2e.B)
+
+«Devolver» appears only on a «Disponible» claim. It opens a declarative confirmation, «¿Devolver este cupón? No podrás volver a reclamarlo», with «Devolver» and «Cancelar»; **opening it sends and stores nothing**. «Cancelar» only dismisses it and shows «Devolución cancelada»: no request, no keystore operation and no change to any record.
+
+| Rule | Behavior |
+| ---- | -------- |
+| Request | The explicit confirmation sends ONE `POST /api/v1/clientes/claims/:claimId/release` per claim (a double tap is the same request), with no body, through the same `runProtected` as every other call. Only the claim that was asked for, now `released` and with no token, counts as confirmed |
+| `200` | «Cupón devuelto»; the row reads «Devuelto» with no «Ver QR» or «Devolver»; an open code for that claim closes; the stored key is removed best effort in the shared QR queue (a key that cannot be removed never turns a confirmed return into a failure and invites no second request). The wallet and the shared feed are read once more because the stock changes; the feed's `claimed` stays `true`, so the coupon is never offered again |
+| `409` | «Este cupón ya no está disponible» and one re-read of the wallet and the feed; never «Cupón devuelto» |
+| Other failures | «No pudimos devolver el cupón. Intenta de nuevo»; nothing repeats on its own and a retry needs a new confirmation |
+| Pending | While a return is on its way the claim offers no second return and no «Ver QR», and a re-issue that answers after the return is neither stored nor shown |
+| Session | An answer that arrives after logout, a new login (the same or another user) or a closed gate applies nothing and touches no key. A wallet read that started before the return cannot bring «Disponible» back |
+| Paused coupon, inactive store | They block new claims only, so they never block a return (C4) |
+
+The return is proved only in Jest with mocked fetch and keystore; nothing ran on a device or emulator.
 
 ## API address
 
@@ -130,7 +146,7 @@ The backend refuses to boot without `DATABASE_URL`, `AUTH_JWT_SECRET` and the fi
 
 | Check                            | Result                                                    |
 | -------------------------------- | --------------------------------------------------------- |
-| Jest (`jest-expo`)               | 395 tests (305 before the wallet unit, plus 78 for claiming, the wallet, the QR store, renderer and repository and the dependency pins, plus 12 public-flow regressions in `wallet-public-flow` and `wallet-navigation`); every call is mocked (fetch, the keystore, the OS location module, the AppState adapter and the Mapbox components), no real server, tile or token. `react-native-svg`, `qrcode` and `jsqr` run for real; `wallet-navigation` uses the real `expo-router`, so «Ver Billetera» is proven to reach the real `/wallet` tab route |
+| Jest (`jest-expo`)               | 441 tests (305 before the wallet unit, plus 78 for claiming, the wallet, the QR store, renderer and repository and the dependency pins, plus 12 public-flow regressions in `wallet-public-flow` and `wallet-navigation`, plus 28 for «Devolver» in `wallet-release` and `wallet-remote`, plus 18 independent «Devolver» regressions in `wallet-release-regressions`); every call is mocked (fetch, the keystore, the OS location module, the AppState adapter and the Mapbox components), no real server, tile or token. `react-native-svg`, `qrcode` and `jsqr` run for real; `wallet-navigation` uses the real `expo-router`, so «Ver Billetera» is proven to reach the real `/wallet` tab route |
 | QR proof                         | The production renderer's own SVG path is rasterized and decoded back with `jsqr` to the exact token, including a mixed-case token with `-` and `_`, and with `TextEncoder` and `Buffer` removed, so it does not rely on Hermes globals. This is a Jest decode, **not a phone scan** |
 | Android Hermes export, `expo config` | The JS bundle exports to Hermes bytecode (4.71 MB) and the public config lists Android only, the Mapbox plugin and the two foreground location permissions: JS and config only |
 | Device or emulator, APK build    | **Not verified.** The map, tiles, the QR on a screen, the system prompt and the real permission transitions have never run on a device; the merged Android manifest is read from the library manifests, not from a Gradle build |
@@ -144,4 +160,4 @@ The backend refuses to boot without `DATABASE_URL`, `AUTH_JWT_SECRET` and the fi
 
 ## Next step
 
-Returning a coupon with its confirmation («Devolver», T2e.B) comes next. Login, session and profile code lives in `src/features/auth`; the feed, following, Mapa and location live in `src/features/discovery`; claiming, the wallet and the QR live in `src/features/wallet`.
+Login, session and profile code lives in `src/features/auth`; the feed, following, Mapa and location live in `src/features/discovery`; claiming, the wallet and the QR live in `src/features/wallet`.

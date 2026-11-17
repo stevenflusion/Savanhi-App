@@ -114,6 +114,32 @@ export function createWalletFetchRepository({
         `/api/v1/clientes/claims/${encodeURIComponent(claimId)}/qr`,
       ),
 
+    async releaseClaim(accessToken, claimId) {
+      try {
+        const response = await authorizedFetch(
+          accessToken,
+          `/api/v1/clientes/claims/${encodeURIComponent(claimId)}/release`,
+          { method: "POST" },
+        );
+        if (!response.ok) return await failure(response);
+        const body = await readJson(response);
+        const data = isRecord(body) ? body.data : undefined;
+        // Only the claim that was asked for, now `released` and with no token,
+        // confirms the return: anything else is not a success.
+        if (
+          !isCustomerClaim(data) ||
+          data.id !== claimId ||
+          data.status !== "released" ||
+          data.qrToken !== null
+        ) {
+          return malformed(response);
+        }
+        return { success: true, data };
+      } catch {
+        return networkFailure;
+      }
+    },
+
     async listClaims(accessToken) {
       try {
         const response = await authorizedFetch(

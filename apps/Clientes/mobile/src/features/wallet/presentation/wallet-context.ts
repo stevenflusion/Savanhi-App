@@ -9,6 +9,15 @@ export type QrResult =
   /** The owner is gone or the session changed: nothing may be shown. */
   | { status: "ignored" };
 
+export type ReleaseResult =
+  /** The server confirmed the return. */
+  | "released"
+  /** The claim is no longer available (redeemed, released or expired). */
+  | "unavailable"
+  | "failed"
+  /** The owner is gone or the session changed: nothing may be shown. */
+  | "ignored";
+
 export type WalletShared = {
   /** `null` until the first read answers; kept while a later read fails. */
   claims: CustomerClaim[] | null;
@@ -21,6 +30,10 @@ export type WalletShared = {
   claimCoupon: (couponId: string) => Promise<void>;
   /** The stored token, or one explicit re-issue when none is stored. */
   resolveQr: (claimId: string) => Promise<QrResult>;
+  /** The one release path: one request per claim, coalesced. */
+  releaseClaim: (claimId: string) => Promise<ReleaseResult>;
+  /** Claims whose return is on its way: no second return and no QR for them. */
+  releasingClaims: readonly string[];
 };
 
 export const WalletContext = createContext<WalletShared | null>(null);
