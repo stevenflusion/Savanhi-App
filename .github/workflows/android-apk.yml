@@ -1,0 +1,171 @@
+name: Android APK
+
+# Manual build: pick the branch in "Use workflow from", then the app(s).
+# Each app is published to a rolling pre-release (`clientes-latest`,
+# `tenderos-latest`) in this repository, so the download link never changes.
+# Repo secrets and variables needed are listed in docs/android-apk-ci.md.
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: App to build
+        type: choice
+        options: [both, clientes, tenderos]
+        default: both
+      abis:
+        description: Android ABIs (arm64-v8a covers nearly every real phone)
+        type: string
+        default: arm64-v8a
+      publish:
+        description: Publish the APK to the rolling GitHub release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        env:
+          APP: ${{ inputs.app }}
+        run: |
+          clientes='{"app":"clientes","dir":"apps/Clientes/mobile","name":"Savanhi Clientes"}'
+          tenderos='{"app":"tenderos","dir":"apps/Tenderos/mobile","name":"Savanhi Tenderos"}'
+          case "$APP" in
+            clientes) include="$clientes" ;;
+            tenderos) include="$tenderos" ;;
+            *)        include="$clientes,$tenderos" ;;
+          esac
+          echo "matrix={\"include\":[$include]}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      APP: ${{ matrix.app }}
+      APP_DIR: ${{ matrix.dir }}
+      MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
+      EXPO_PUBLIC_CLIENTES_API_URL: ${{ vars.EXPO_PUBLIC_CLIENTES_API_URL }}
+      EXPO_PUBLIC_TENDEROS_API_URL: ${{ vars.EXPO_PUBLIC_TENDEROS_API_URL }}
+      CLIENTES_EAS_PROJECT_ID: ${{ vars.CLIENTES_EAS_PROJECT_ID }}
+      EXPO_NO_TELEMETRY: "1"
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check inputs and secrets
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=()
+          [ -n "$KEYSTORE_B64" ]      || missing+=(ANDROID_KEYSTORE_BASE64)
+          [ -n "$KEYSTORE_PASSWORD" ] || missing+=(ANDROID_KEYSTORE_PASSWORD)
+          [ -n "$KEY_ALIAS" ]         || missing+=(ANDROID_KEY_ALIAS)
+          [ -n "$KEY_PASSWORD" ]      || missing+=(ANDROID_KEY_PASSWORD)
+          [ -n "$MAPBOX_ACCESS_TOKEN" ] || missing+=(MAPBOX_ACCESS_TOKEN)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing repository secrets: ${missing[*]}"
+            exit 1
+          fi
+          # Clientes release builds refuse to start without an HTTPS API URL.
+          if [ "$APP" = "clientes" ]; then
+            case "$EXPO_PUBLIC_CLIENTES_API_URL" in
+              https://*) ;;
+              *) echo "::error::Repository variable EXPO_PUBLIC_CLIENTES_API_URL must be an https:// URL"; exit 1 ;;
+            esac
+          fi
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prepare signing and Firebase files
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          GOOGLE_SERVICES_B64: ${{ secrets.CLIENTES_GOOGLE_SERVICES_BASE64 }}
+        run: |
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          # Optional: without it Clientes builds with the coupon reminders hidden.
+          if [ "$APP" = "clientes" ] && [ -n "$GOOGLE_SERVICES_B64" ]; then
+            printf '%s' "$GOOGLE_SERVICES_B64" | base64 -d > "$RUNNER_TEMP/google-services.json"
+            echo "CLIENTES_GOOGLE_SERVICES_FILE=$RUNNER_TEMP/google-services.json" >> "$GITHUB_ENV"
+          fi
+
+      # The native project is regenerated on the runner, so Clientes (no
+      # android/ folder) and Tenderos (committed android/) build the same way.
+      - name: Generate native Android project
+        working-directory: ${{ matrix.dir }}
+        run: pnpm exec expo prebuild --platform android --clean --no-install
+
+      - name: Configure release signing and version
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: python3 scripts/ci/android-release-config.py "$APP_DIR/android/app/build.gradle" "${{ github.run_number }}"
+
+      - name: Build release APK
+        working-directory: ${{ matrix.dir }}/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: >
+          ./gradlew assembleRelease --no-daemon
+          -PreactNativeArchitectures=${{ inputs.abis }}
+          -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g"
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          cp "$APP_DIR/android/app/build/outputs/apk/release/app-release.apk" "out/savanhi-$APP.apk"
+          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "out/savanhi-$APP.apk" | head -3
+          ls -lh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: savanhi-${{ matrix.app }}-apk
+          path: out/savanhi-${{ matrix.app }}.apk
+          retention-days: 14
+
+      - name: Publish rolling release
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ matrix.name }}
+        run: |
+          tag="$APP-latest"
+          gh release delete "$tag" --cleanup-tag --yes || true
+          gh release create "$tag" "out/savanhi-$APP.apk" \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "$NAME (latest build)" \
+            --notes "Build #${{ github.run_number }} from \`${{ github.ref_name }}\` at ${GITHUB_SHA::7}. ABIs: ${{ inputs.abis }}."
