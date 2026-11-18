@@ -18,6 +18,7 @@
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "tsx src/scripts/migrate.ts",
     "db:seed": "tsx src/scripts/seed.ts",
+    "coupon-expiry-reminders": "tsx src/scripts/coupon-expiry-reminders.ts",
     "bootstrap:dev-admin": "tsx src/scripts/bootstrap-dev-admin.ts"
   },
   "dependencies": {

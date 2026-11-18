@@ -121,6 +121,61 @@ export const customerPushDevices = pgTable(
   }),
 );
 
+/**
+ * The pilot ledger of the coupon-expiry reminder: ONE row per reservation,
+ * written when the reservation becomes due, for both arms. `claim_id` is the
+ * primary key, so a claim is assigned, acquired and sent at most once however
+ * many workers run.
+ *
+ * `state` records what is KNOWN, never what is hoped: `assigned` (nothing
+ * attempted; always the holdout's state), `sending` (acquired, provider call
+ * possibly in flight), then `accepted` (Expo returned a ticket, NOT delivery),
+ * `rejected` (provider refused), `unknown` (outcome not observed, e.g. timeout
+ * or a crashed job) or `skipped` (eligibility lapsed before any request).
+ * `device_id` has no foreign key: the device row may be dropped afterwards.
+ */
+export const couponExpiryReminders = pgTable(
+  "coupon_expiry_reminders",
+  {
+    claimId: uuid("claim_id")
+      .references(() => couponClaims.id, { onDelete: "cascade" })
+      .primaryKey(),
+    arm: text("arm").$type<"reminder" | "holdout">().notNull(),
+    state: text("state")
+      .$type<
+        "assigned" | "sending" | "accepted" | "rejected" | "unknown" | "skipped"
+      >()
+      .default("assigned")
+      .notNull(),
+    assignedOn: date("assigned_on", { mode: "string" }).notNull(),
+    deviceId: uuid("device_id"),
+    attemptedAt: timestamp("attempted_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    stateIndex: index("coupon_expiry_reminders_state_idx").on(
+      table.state,
+      table.createdAt,
+    ),
+    armCheck: check(
+      "coupon_expiry_reminders_arm_chk",
+      sql`${table.arm} in ('reminder', 'holdout')`,
+    ),
+    stateCheck: check(
+      "coupon_expiry_reminders_state_chk",
+      sql`${table.state} in ('assigned', 'sending', 'accepted', 'rejected', 'unknown', 'skipped')`,
+    ),
+    /** The holdout never reaches the provider, whatever statement runs. */
+    holdoutCheck: check(
+      "coupon_expiry_reminders_holdout_chk",
+      sql`${table.arm} = 'reminder' or ${table.state} = 'assigned'`,
+    ),
+  }),
+);
+
 export const otpChallenges = pgTable(
   "otp_challenges",
   {
@@ -882,6 +937,7 @@ export const schema = {
   users,
   authSessions,
   customerPushDevices,
+  couponExpiryReminders,
   otpChallenges,
   otpRequestLeases,
   authRateLimits,
