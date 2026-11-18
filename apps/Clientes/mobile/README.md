@@ -18,7 +18,7 @@ Today it is a **navigation shell behind a customer login and profile gate**, wit
 | Metro port     | `8083` (Tenderos uses `8082`)                                        |
 | Mode           | Expo dev client (`expo start --dev-client --lan`), like Tenderos     |
 | Android id     | `com.savanhi.clientes`                                               |
-| Permissions    | foreground location only (`ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION`), asked only when Mapa opens |
+| Permissions    | foreground location (`ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION`), asked only when Mapa opens; notifications, asked only after the opt-in in Billetera (see «Coupon expiry reminders») |
 | Sign-in        | email code (OTP) only; verification always sends `registrationRole: "client"` |
 | Profile gate   | no tab opens until the server reports the customer `eligible` (18+) AND a name exists |
 | Session        | `expo-secure-store` under the key `savanhi-clientes-session` (never the Tenderos key) |
@@ -122,6 +122,43 @@ Mapa shows a native map (`@rnmapbox/maps`) fixed on the customer's position with
 
 The return is proved only in Jest with mocked fetch and keystore; nothing ran on a device or emulator.
 
+## Coupon expiry reminders (T4)
+
+Billetera offers an **explicit opt-in** to one push reminder the day before a reserved coupon expires (`odd/tasks/coupon-expiry-push.md`, S1 and S2). Nothing is asked at welcome or at start: the OS permission prompt, the Expo token and `PUT /api/v1/clientes/push-device` happen only when the customer presses «Activar recordatorios».
+
+| Case | Behavior |
+| ---- | -------- |
+| Not configured (no project id) or not Android | The card is hidden and no notification call is made; the app behaves as before |
+| «Activar recordatorios» | Creates the Android channel, asks the OS once, gets the Expo token, then `PUT {expoToken}`. The choice is stored per account in `expo-secure-store` (`savanhi-clientes-reminders.<userId>`, a flag only) |
+| OS denies, token or `PUT` fails | «Savanhi no tiene permiso…» or «No pudimos activar los recordatorios. Intenta de nuevo»; nothing is stored and nothing is retried silently |
+| «Desactivar recordatorios» | `DELETE /push-device` (idempotent) and the choice is cleared, even if the OS permission stays granted. A failed removal stays pending («No pudimos desactivar…», «Reintentar») and is retried at the next eligible start |
+| Next start or login | Registers again only for the account that opted in and only while the OS already allows notifications; it never prompts and never opts another account in |
+| Logout | Unchanged: the backend drops the session's device. The account's own choice stays, so its next login registers again |
+
+**Order and sessions.** Every call goes through `runProtected`; `PUT` and `DELETE` share one queue and every step checks a generation, so a logout, another account or switching the preference off cannot let an older registration land after a removal. A removal that was queued for an account that has since left is not sent under the next account's session; it stays pending for the first account.
+
+**Tapping a reminder.** Only `data.type = "coupon-expiry-reminder"` with a well-formed `data.claimId` and the default tap action is used. A tap (warm, foreground or the one that launched the app) waits for an eligible session, moves to Billetera, and is resolved against the wallet read **after** the tap: an available claim is highlighted with its normal store, validity and «Ver QR». The QR is never opened by the tap. A claim that is missing, from another account, no longer available, or a failed read just ends the tap with no message, and Billetera stays usable. A replayed Expo response is handled once.
+
+**Build inputs (names only, no values in the repository).**
+
+| Variable | Purpose |
+| -------- | ------- |
+| `CLIENTES_EAS_PROJECT_ID` | Expo project id used for the push token; also `extra.eas.projectId`. Unset means «not configured» |
+| `CLIENTES_GOOGLE_SERVICES_FILE` | PATH to the Firebase Android file, kept outside the repository (`android.googleServicesFile`) |
+
+`app.config.js` declares no notification permission: `POST_NOTIFICATIONS` reaches the Android manifest from the `expo-notifications` library manifest merge at build time, and the app asks the OS for it only after the opt-in. A binary built before this change lacks the module, so a **fresh Android development client** is required. The `expo-notifications` plugin and the Android channel `default` (the one Expo uses when a push names none) are the only native additions: no app scheme, intent filter or coupon link. `expo-notifications` is `~0.32.17`, the Tenderos range.
+
+**Controlled rehearsal (later, outside this change).**
+
+1. Provide the Expo project and FCM credentials, and the two variables above, in your own environment. Nothing here creates or stores them.
+2. Apply migration `0011_customer_push_devices` before deploying the backend, and `0012_coupon_expiry_reminders` before running the job. Keep `COUPON_EXPIRY_REMINDERS_SEND` unset (sending disabled) until the rehearsal is ready.
+3. Build a **fresh Android development client** (a new native module and plugin; Expo Go and an old client cannot run it).
+4. Open the app, press «Activar recordatorios» in Billetera and accept the prompt. Check one device row on the backend.
+5. Closed-app run: close the app, enable sending for one test reservation due tomorrow, and tap the notification from the closed state. Warm run: do the same with the app in the background. Both must land on that coupon in Billetera without opening the QR.
+6. Opt out: press «Desactivar recordatorios» and check the device row is gone while the OS permission stays granted.
+
+**Not claimed.** Verified only in Jest with `expo-notifications` replaced by a fake: no push was sent, no physical Android device, closed-app delivery or Expo FCM credential was involved, and no Android build ran. Rollback: stop the job or leave sending disabled; remove the plugin and the Billetera card to drop the feature, and the additive tables can stay.
+
 ## API address
 
 | Build       | Address                                                                                                                                  |
@@ -160,4 +197,4 @@ The backend refuses to boot without `DATABASE_URL`, `AUTH_JWT_SECRET` and the fi
 
 ## Next step
 
-Login, session and profile code lives in `src/features/auth`; the feed, following, Mapa and location live in `src/features/discovery`; claiming, the wallet and the QR live in `src/features/wallet`.
+Login, session and profile code lives in `src/features/auth`; the feed, following, Mapa and location live in `src/features/discovery`; claiming, the wallet and the QR live in `src/features/wallet`; the reminder opt-in and tap intake live in `src/features/coupon-reminders`.

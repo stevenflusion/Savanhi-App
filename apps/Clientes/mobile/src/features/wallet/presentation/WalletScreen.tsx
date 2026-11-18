@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, FlatList, Pressable, Text, View } from "react-native";
 import { useFocusEffect } from "expo-router";
+import type { CustomerClaim } from "@repo/api-contracts";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import ReminderCard from "@/src/features/coupon-reminders/presentation/ReminderCard";
+import { useCouponReminders } from "@/src/features/coupon-reminders/presentation/reminders-context";
 
 import { WALLET_COPY } from "../domain/copy";
 import ClaimCard from "./ClaimCard";
@@ -49,6 +53,13 @@ export default function WalletScreen() {
   const [confirmClaimId, setConfirmClaimId] = useState<string | null>(null);
   // The one outcome notice of a return; a new action replaces it.
   const [releaseNotice, setReleaseNotice] = useState<string | null>(null);
+  // A tapped coupon reminder is resolved here, in the authenticated wallet.
+  const reminders = useCouponReminders();
+  const reminderTarget = reminders?.walletTarget ?? null;
+  const finishReminder = reminders?.finishTarget;
+  const [readForTarget, setReadForTarget] = useState<string | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const listRef = useRef<FlatList<CustomerClaim>>(null);
 
   const confirmRelease = useCallback(() => {
     const claimId = confirmClaimId;
@@ -71,6 +82,7 @@ export default function WalletScreen() {
       void loadClaims();
       return () => {
         focused.current = false;
+        setHighlightId(null);
       };
     }, [loadClaims]),
   );
@@ -81,6 +93,35 @@ export default function WalletScreen() {
     });
     return () => subscription.remove();
   }, [loadClaims]);
+
+  // The tap resolves only against a read that started after it, so an older
+  // list can never answer for it.
+  useEffect(() => {
+    if (!reminderTarget) return;
+    let cancelled = false;
+    void loadClaims().then(() => {
+      if (!cancelled) setReadForTarget(reminderTarget);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [reminderTarget, loadClaims]);
+
+  useEffect(() => {
+    if (!reminderTarget || readForTarget !== reminderTarget) return;
+    if (claimsStatus === "loading") return;
+    // Found or not, a failed read or a missing claim just ends the tap: nothing
+    // is said about it and the wallet stays as the server reports it.
+    const index = claims?.findIndex((claim) => claim.id === reminderTarget) ?? -1;
+    if (claimsStatus === "idle" && claims && index >= 0) {
+      if (claims[index]?.status === "claimed") {
+        setHighlightId(reminderTarget);
+        listRef.current?.scrollToIndex({ index, animated: false });
+      }
+    }
+    setReadForTarget(null);
+    finishReminder?.(reminderTarget);
+  }, [reminderTarget, readForTarget, claims, claimsStatus, finishReminder]);
 
   let body;
   if (claims === null) {
@@ -95,12 +136,15 @@ export default function WalletScreen() {
   } else {
     body = (
       <FlatList
+        ref={listRef}
+        onScrollToIndexFailed={() => {}}
         data={claims}
         keyExtractor={(claim) => claim.id}
         showsVerticalScrollIndicator={false}
         renderItem={({ item }) => (
           <ClaimCard
             claim={item}
+            highlighted={item.id === highlightId}
             releasing={releasingClaims.includes(item.id)}
             onViewQr={() => {
               setUnavailable(false);
@@ -126,6 +170,7 @@ export default function WalletScreen() {
       >
         {WALLET_COPY.title}
       </Text>
+      <ReminderCard />
       {unavailable ? <Notice text={WALLET_COPY.unavailable} /> : null}
       {releaseNotice ? <Notice text={releaseNotice} /> : null}
       {claims !== null && claimsStatus === "error" ? (

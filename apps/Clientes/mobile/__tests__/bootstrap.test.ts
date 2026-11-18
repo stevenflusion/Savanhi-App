@@ -46,9 +46,10 @@ describe("Savanhi Clientes bootstrap", () => {
         Array.isArray(plugin) ? plugin[0] : plugin,
       );
 
-      // Mapa is the only thing that asks the OS, and only for the foreground
-      // location (C10). Nothing runs in the background and no camera,
-      // notification, storage or foreground-service permission exists.
+      // Mapa asks the OS for the foreground location (C10) and Billetera asks
+      // for notifications only after an explicit opt-in. Nothing runs in the
+      // background and no camera, storage or foreground-service permission is
+      // declared here (the notification permission comes from the plugin).
       expect(config.android.permissions).toEqual([
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
@@ -61,6 +62,7 @@ describe("Savanhi Clientes bootstrap", () => {
         "expo-router",
         "expo-secure-store",
         "@rnmapbox/maps",
+        "expo-notifications",
       ]);
       expect(pluginNames).not.toContain("expo-location");
     });
@@ -104,6 +106,51 @@ describe("Savanhi Clientes bootstrap", () => {
 
       expect(config.android.intentFilters).toBeUndefined();
       expect(config.ios).toBeUndefined();
+      expect(config.scheme).toBe("savanhiclientes");
+    });
+
+    describe("coupon reminders build inputs", () => {
+      const names = ["CLIENTES_EAS_PROJECT_ID", "CLIENTES_GOOGLE_SERVICES_FILE"];
+      const saved = names.map((name) => process.env[name]);
+      afterEach(() => {
+        names.forEach((name, i) => {
+          if (saved[i] === undefined) delete process.env[name];
+          else process.env[name] = saved[i];
+        });
+      });
+
+      it("wires neither a project id nor a Google file when the variables are unset", () => {
+        names.forEach((name) => delete process.env[name]);
+        const config = loadExpoConfig();
+
+        expect(config.extra.eas).toBeUndefined();
+        expect(config.android.googleServicesFile).toBeUndefined();
+        expect(config.extra.MAPBOX_ACCESS_TOKEN).toBeDefined();
+      });
+
+      it("reads the project id and the Google file PATH from named variables", () => {
+        process.env.CLIENTES_EAS_PROJECT_ID = "00000000-0000-4000-8000-000000000000";
+        process.env.CLIENTES_GOOGLE_SERVICES_FILE = "./synthetic/google-services.json";
+        const config = loadExpoConfig();
+
+        expect(config.extra.eas).toEqual({
+          projectId: "00000000-0000-4000-8000-000000000000",
+        });
+        expect(config.android.googleServicesFile).toBe(
+          "./synthetic/google-services.json",
+        );
+      });
+
+      it("treats blank values as unset and commits no credential file or id", () => {
+        process.env.CLIENTES_EAS_PROJECT_ID = "  ";
+        process.env.CLIENTES_GOOGLE_SERVICES_FILE = "";
+        const config = loadExpoConfig();
+        const source = fs.readFileSync(path.join(packageRoot, "app.config.js"), "utf8");
+
+        expect(config.extra.eas).toBeUndefined();
+        expect(config.android.googleServicesFile).toBeUndefined();
+        expect(source).not.toMatch(/google-services\.json|[0-9a-f]{8}-[0-9a-f]{4}-/);
+      });
     });
   });
 
@@ -157,7 +204,11 @@ describe("Savanhi Clientes bootstrap", () => {
       expect(pkg.dependencies["expo-location"]).toBe(
         tenderos.dependencies["expo-location"],
       );
-      for (const absent of ["expo-camera", "expo-notifications", "dotenv"]) {
+      // The notification module is the one Tenderos already resolves.
+      expect(pkg.dependencies["expo-notifications"]).toBe(
+        tenderos.dependencies["expo-notifications"],
+      );
+      for (const absent of ["expo-camera", "dotenv"]) {
         expect(dependencies).not.toContain(absent);
       }
       expect(Object.keys(pkg.devDependencies)).not.toContain("dotenv");

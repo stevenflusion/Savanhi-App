@@ -3,6 +3,8 @@ import { Pressable, Text, View } from "react-native";
 
 import { describeBenefit, formatValidity } from "@/src/features/discovery/domain/format";
 
+import { REMINDER_COPY } from "@/src/features/coupon-reminders/domain/copy";
+
 import { canShowQr } from "../domain/claim";
 import { STATUS_LABEL, WALLET_COPY } from "../domain/copy";
 
@@ -10,6 +12,8 @@ type Props = {
   claim: CustomerClaim;
   onViewQr: () => void;
   onRelease: () => void;
+  /** The claim a tapped coupon reminder pointed at; it changes nothing else. */
+  highlighted?: boolean;
   /** The return is on its way: no second return and no code for this claim. */
   releasing: boolean;
 };
@@ -24,13 +28,21 @@ export default function ClaimCard({
   onViewQr,
   onRelease,
   releasing,
+  highlighted = false,
 }: Props) {
   const { coupon, store } = claim;
   const benefit = describeBenefit(coupon);
   const validity = formatValidity(coupon.validFrom, coupon.validTo);
 
   return (
-    <View className="mb-4 rounded-3xl bg-white p-5">
+    <View
+      className={`mb-4 rounded-3xl bg-white p-5 ${highlighted ? "border-2 border-emerald-600" : ""}`}
+    >
+      {highlighted ? (
+        <Text className="mb-2 text-xs font-medium text-emerald-700">
+          {REMINDER_COPY.opened}
+        </Text>
+      ) : null}
       <View className="flex-row items-start justify-between gap-3">
         <Text className="flex-1 text-lg font-semibold text-slate-900">
           {coupon.title}

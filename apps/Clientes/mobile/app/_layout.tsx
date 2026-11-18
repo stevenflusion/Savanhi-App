@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider } from "@/src/features/auth";
+import { CouponRemindersProvider } from "@/src/features/coupon-reminders";
 import "../global.css";
 
 export default function RootLayout() {
@@ -19,7 +20,9 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <StatusBar style="dark" />
       <AuthProvider>
-        <Stack screenOptions={{ headerShown: false }} />
+        <CouponRemindersProvider>
+          <Stack screenOptions={{ headerShown: false }} />
+        </CouponRemindersProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

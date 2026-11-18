@@ -1,3 +1,11 @@
+// Optional build inputs for coupon expiry reminders. Names only: the values come
+// from the environment (or EAS), never from the repository. When either is
+// blank the app builds as before and the reminder opt-in stays hidden.
+const envValue = (name) => process.env[name]?.trim() || undefined;
+const easProjectId = envValue("CLIENTES_EAS_PROJECT_ID");
+// A PATH to the Firebase Android file, which stays outside the repository.
+const googleServicesFile = envValue("CLIENTES_GOOGLE_SERVICES_FILE");
+
 module.exports = {
   expo: {
     name: "Savanhi Clientes",
@@ -17,10 +25,12 @@ module.exports = {
     // the Mapa screen reports instead of drawing a fake map.
     extra: {
       MAPBOX_ACCESS_TOKEN: process.env.MAPBOX_ACCESS_TOKEN ?? "",
+      ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
     },
-    // Only the two FOREGROUND location permissions are requested, and only
-    // when Mapa opens (C10). Nothing runs in the background and no camera,
-    // notification or storage permission exists.
+    // The two FOREGROUND location permissions are requested only when Mapa
+    // opens (C10), and the notification permission only after the customer
+    // opts in to coupon reminders in Billetera. Nothing runs in the
+    // background and no camera or storage permission exists.
     // `expo-secure-store` holds the session. Its plugin keeps those entries out
     // of Android Auto Backup (a restored backup cannot decrypt them); the
     // Face ID text it can set applies to iOS only and no biometric option is
@@ -32,6 +42,9 @@ module.exports = {
       // is configured. `expo-location` needs no config plugin: it adds only
       // the permissions declared below and iOS usage text we do not ship.
       ["@rnmapbox/maps", { RNMapboxMapsVersion: "11.20.1" }],
+      // Coupon expiry reminders. The plugin adds no scheme or intent filter;
+      // the Android channel is created at runtime, after the opt-in.
+      "expo-notifications",
     ],
     updates: {
       enabled: false,
@@ -47,6 +60,7 @@ module.exports = {
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
       ],
+      ...(googleServicesFile ? { googleServicesFile } : {}),
     },
   },
 };
