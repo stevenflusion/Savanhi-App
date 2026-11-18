@@ -78,6 +78,13 @@
       "when": 1794150064463,
       "tag": "0010_customer_birth_date",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794961995501,
+      "tag": "0011_customer_push_devices",
+      "breakpoints": true
     }
   ]
 }

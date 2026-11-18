@@ -14,6 +14,7 @@ export type { DatabaseConnection } from "./database/connection.js";
 export { createAuthLogsRepository } from "./database/repositories/auth-logs.repository.js";
 export { createCatalogRepository } from "./database/repositories/catalog.repository.js";
 export { createCouponsRepository } from "./database/repositories/coupons.repository.js";
+export { createCustomerPushDevicesRepository } from "./database/repositories/customer-push-devices.repository.js";
 export { createDeliveriesRepository } from "./database/repositories/deliveries.repository.js";
 export { createOrdersRepository } from "./database/repositories/orders.repository.js";
 export { createProductsRepository } from "./database/repositories/products.repository.js";

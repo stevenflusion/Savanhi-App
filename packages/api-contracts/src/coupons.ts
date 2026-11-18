@@ -708,3 +708,19 @@ export type CustomerClaimsResponse = {
 export type CustomerClaimResponse = {
   data: CustomerClaim;
 };
+
+/**
+ * The Expo push token of the device a signed-in customer session runs on.
+ * It is a delivery address, not an identity: the server binds it to the
+ * authenticated session family and never to anything the body names.
+ */
+export const customerPushDeviceSchema = z.object({
+  expoToken: z
+    .string()
+    .max(255)
+    .regex(/^(?:Expo|Exponent)PushToken\[[A-Za-z0-9_-]+\]$/),
+});
+
+export type CustomerPushDeviceRequest = z.infer<
+  typeof customerPushDeviceSchema
+>;

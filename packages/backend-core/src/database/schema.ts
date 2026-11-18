@@ -84,6 +84,43 @@ export const authSessions = pgTable(
   }),
 );
 
+/**
+ * The device a customer session receives push reminders on. It is bound to a
+ * refresh-token FAMILY, not to a rotating access token: refresh keeps the
+ * family, so the registration survives rotation, while sign-out or revocation
+ * of the family leaves a sender with no live session to send to.
+ *
+ * Invariants: one owner per Expo token (`expo_token` unique) and one token per
+ * session family (`family_id` unique). `family_id` has no foreign key because
+ * `auth_sessions.family_id` is not unique (one row per rotation).
+ */
+export const customerPushDevices = pgTable(
+  "customer_push_devices",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    familyId: uuid("family_id").notNull(),
+    expoToken: text("expo_token").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    tokenIndex: uniqueIndex("customer_push_devices_token_uidx").on(
+      table.expoToken,
+    ),
+    familyIndex: uniqueIndex("customer_push_devices_family_uidx").on(
+      table.familyId,
+    ),
+    userIndex: index("customer_push_devices_user_idx").on(table.userId),
+  }),
+);
+
 export const otpChallenges = pgTable(
   "otp_challenges",
   {
@@ -844,6 +881,7 @@ export const schema = {
   roles,
   users,
   authSessions,
+  customerPushDevices,
   otpChallenges,
   otpRequestLeases,
   authRateLimits,

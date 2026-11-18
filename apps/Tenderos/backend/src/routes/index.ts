@@ -14,6 +14,7 @@ import {
   couponUpdateSchema,
   customerCoordinatesSchema,
   customerFeedQuerySchema,
+  customerPushDeviceSchema,
   imageUploadTicketRequestSchema,
   redemptionHistoryQuerySchema,
   storePhotoRegisterSchema,
@@ -1003,6 +1004,45 @@ export function createApiRouter({
         res
           .status(200)
           .json({ data: await customerProfile.update(customerId(req), req.body) });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  /**
+   * The device this customer session receives coupon-expiry reminders on.
+   *
+   * The owner is the authenticated session and never the body. PUT is behind
+   * the eligibility gate; DELETE only needs an authenticated customer, so a
+   * person who stopped being eligible can still switch reminders off. Both are
+   * idempotent 204s, and the registration follows the session's refresh-token
+   * family (see `customer_push_devices`).
+   */
+  router.put(
+    "/api/v1/clientes/push-device",
+    requireEligibleClient,
+    validateBody(customerPushDeviceSchema),
+    async (req, res, next) => {
+      try {
+        await context.authService.registerPushDevice(
+          req.auth?.token ?? "",
+          req.body.expoToken,
+        );
+        res.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  router.delete(
+    "/api/v1/clientes/push-device",
+    requireClient,
+    async (req, res, next) => {
+      try {
+        await context.authService.removePushDevice(req.auth?.token ?? "");
+        res.status(204).end();
       } catch (error) {
         next(error);
       }

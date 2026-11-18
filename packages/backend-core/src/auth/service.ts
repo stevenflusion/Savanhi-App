@@ -23,6 +23,7 @@ import {
   stores,
   users,
 } from "../database/schema.js";
+import { createCustomerPushDevicesRepository } from "../database/repositories/customer-push-devices.repository.js";
 import type { createAuthLogsRepository } from "../database/repositories/auth-logs.repository.js";
 import type { createUsersRepository } from "../database/repositories/users.repository.js";
 import type { BackendEnv } from "../types/env.js";
@@ -121,6 +122,31 @@ export function createAuthService(
         expiresIn: ACCESS_SECONDS,
       } satisfies AuthSession,
     };
+  }
+  const pushDevices = createCustomerPushDevicesRepository();
+  /**
+   * The live session of an access token, locked for the transaction. The token
+   * was already verified by the auth middleware; this is the same liveness
+   * rule as `getUserFromAccessToken`, repeated under the lock.
+   */
+  async function lockLiveSession(
+    tx: Parameters<Parameters<DatabaseConnection["transaction"]>[0]>[0],
+    accessTokenValue: string,
+  ) {
+    const [session] = await tx
+      .select({ userId: authSessions.userId, familyId: authSessions.familyId })
+      .from(authSessions)
+      .where(
+        and(
+          eq(authSessions.tokenHash, hash(accessTokenValue)),
+          isNull(authSessions.revokedAt),
+          isNull(authSessions.rotatedAt),
+          gt(authSessions.expiresAt, new Date()),
+        ),
+      )
+      .for("update");
+    if (!session) throw new AppError("Invalid or expired access token.", 401);
+    return session;
   }
   async function findCredentials(email: string) {
     const normalized = normalizeEmail(email);
@@ -727,11 +753,44 @@ export function createAuthService(
         throw new AppError("Invalid or expired access token.", 401);
       }
     },
+    /**
+     * Binds the caller's push device to its refresh-token family. The live
+     * session row is locked first, so a concurrent sign-out or rotation either
+     * finishes before the write (this answers 401 and writes nothing) or waits
+     * for it (and then removes it); a registration is never acknowledged for
+     * a session that is already dead.
+     */
+    async registerPushDevice(
+      accessTokenValue: string,
+      expoToken: string,
+    ): Promise<void> {
+      await db.transaction(async (tx) => {
+        const session = await lockLiveSession(tx, accessTokenValue);
+        await pushDevices.bind(tx, {
+          userId: session.userId,
+          familyId: session.familyId,
+          expoToken,
+        });
+      });
+    },
+    /** Idempotent: removes only the device bound to the caller's own family. */
+    async removePushDevice(accessTokenValue: string): Promise<void> {
+      await db.transaction(async (tx) => {
+        const session = await lockLiveSession(tx, accessTokenValue);
+        await pushDevices.removeForFamily(tx, session.familyId);
+      });
+    },
     async signOut(accessTokenValue: string): Promise<void> {
-      await db
-        .update(authSessions)
-        .set({ revokedAt: new Date() })
-        .where(eq(authSessions.tokenHash, hash(accessTokenValue)));
+      await db.transaction(async (tx) => {
+        const revoked = await tx
+          .update(authSessions)
+          .set({ revokedAt: new Date() })
+          .where(eq(authSessions.tokenHash, hash(accessTokenValue)))
+          .returning({ familyId: authSessions.familyId });
+        for (const { familyId } of revoked) {
+          await pushDevices.removeForFamily(tx, familyId);
+        }
+      });
       await audit("logout", { outcome: "success" });
     },
   };
